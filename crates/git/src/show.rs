@@ -30,20 +30,13 @@ pub fn show(path: &Path, rev: &str) -> Result<CommitDetail> {
         .with_context(|| format!("{rev} does not point to a commit"))?;
 
     let hash = commit.id().to_string();
-    let author = commit
-        .author()
-        .name()
-        .unwrap_or("<unknown>")
-        .to_string();
+    let author = commit.author().name().unwrap_or("<unknown>").to_string();
     let email = commit.author().email().unwrap_or("").to_string();
 
     let time = commit.time();
     let date = crate::log::format_epoch(time.seconds());
 
-    let message = commit
-        .message()
-        .unwrap_or("")
-        .to_string();
+    let message = commit.message().unwrap_or("").to_string();
 
     let tree = commit.tree().context("commit has no tree")?;
 
@@ -131,15 +124,8 @@ mod tests {
             let tree_id = index.write_tree().unwrap();
             let tree = repo.find_tree(tree_id).unwrap();
             let head = repo.head().unwrap().peel_to_commit().unwrap();
-            repo.commit(
-                Some("HEAD"),
-                &sig,
-                &sig,
-                "add world line",
-                &tree,
-                &[&head],
-            )
-            .unwrap();
+            repo.commit(Some("HEAD"), &sig, &sig, "add world line", &tree, &[&head])
+                .unwrap();
         }
 
         (dir, repo)

@@ -41,16 +41,8 @@ pub fn log(path: &Path, limit: usize) -> Result<Vec<LogEntry>> {
         let hash = oid.to_string();
         let short_hash = hash[..7.min(hash.len())].to_string();
 
-        let author = commit
-            .author()
-            .name()
-            .unwrap_or("<unknown>")
-            .to_string();
-        let email = commit
-            .author()
-            .email()
-            .unwrap_or("")
-            .to_string();
+        let author = commit.author().name().unwrap_or("<unknown>").to_string();
+        let email = commit.author().email().unwrap_or("").to_string();
 
         let time = commit.time();
         let date = format_epoch(time.seconds());

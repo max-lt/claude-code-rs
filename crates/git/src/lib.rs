@@ -7,9 +7,9 @@ mod repo;
 mod show;
 mod status;
 
-pub use blame::{blame, blame_range, BlameLine};
-pub use diff::{diff_staged, diff_unstaged, diff_range, DiffEntry, DiffStat};
-pub use log::{log as git_log, LogEntry};
-pub use repo::{open_repo, repo_root, current_branch, list_branches, BranchInfo};
-pub use show::{show, CommitDetail};
-pub use status::{status, StatusEntry, FileStatus};
+pub use blame::{BlameLine, blame, blame_range};
+pub use diff::{DiffEntry, DiffStat, diff_range, diff_staged, diff_unstaged};
+pub use log::{LogEntry, log as git_log};
+pub use repo::{BranchInfo, current_branch, list_branches, open_repo, repo_root};
+pub use show::{CommitDetail, show};
+pub use status::{FileStatus, StatusEntry, status};
