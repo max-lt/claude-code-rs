@@ -181,7 +181,11 @@ pub async fn exchange_oauth_code(
 }
 
 pub async fn refresh_access_token(creds: &Credentials) -> Result<(String, Credentials)> {
-    assert_eq!(creds.token_type(), TokenType::OAuthRefresh);
+    anyhow::ensure!(
+        creds.token_type() == TokenType::OAuthRefresh,
+        "Expected OAuth refresh token, got {:?}",
+        creds.token_type()
+    );
 
     let client = reqwest::Client::new();
 

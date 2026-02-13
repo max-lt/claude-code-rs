@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::api::{ApiClient, Content, ContentBlock, Message, StopReason, Usage};
 use crate::event::EventHandler;
@@ -38,10 +38,12 @@ impl SessionBuilder {
         self
     }
 
-    pub fn permissions<P: PermissionHandler>(self, permissions: P) -> Session<P> {
-        let cwd = self
-            .cwd
-            .unwrap_or_else(|| std::env::current_dir().expect("failed to get current directory"));
+    pub fn permissions<P: PermissionHandler>(self, permissions: P) -> Result<Session<P>> {
+        let cwd = match self.cwd {
+            Some(cwd) => cwd,
+            None => std::env::current_dir()
+                .context("Failed to determine current directory")?,
+        };
 
         let system_prompt = "You are Claude Code, Anthropic's official CLI for Claude.".to_string();
 
@@ -75,7 +77,7 @@ impl SessionBuilder {
 
         let bootstrap_len = bootstrap_messages.len();
 
-        Session {
+        Ok(Session {
             client: ApiClient::new(self.access_token, self.is_oauth),
             cwd,
             permissions,
@@ -83,10 +85,10 @@ impl SessionBuilder {
             bootstrap_len,
             system_prompt,
             tools: tools::default_registry(),
-        }
+        })
     }
 
-    pub fn build(self) -> Session<AllowAll> {
+    pub fn build(self) -> Result<Session<AllowAll>> {
         self.permissions(AllowAll)
     }
 }
