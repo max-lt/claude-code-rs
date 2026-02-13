@@ -219,6 +219,15 @@ fn collect_files(path: &Path, glob_filter: Option<&str>) -> Vec<std::path::PathB
     let walker = ignore::WalkBuilder::new(path)
         .hidden(false)
         .git_ignore(true)
+        .add_custom_ignore_filename(".claudeignore")
+        .filter_entry(|entry| {
+            let name = entry
+                .path()
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            !ccrs_utils::is_ignored_dir(name)
+        })
         .build();
 
     for entry in walker {

@@ -321,17 +321,12 @@ impl FileWalker {
             .add_custom_ignore_filename(".claudeignore")
             // Add common build/dependency directories to ignore
             .filter_entry(|entry| {
-                let path = entry.path();
-                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                
-                // Ignore common dependency and build directories
-                !matches!(
-                    name,
-                    "node_modules" | "target" | ".git" | "dist" | "build" | 
-                    ".next" | ".nuxt" | ".output" | ".svelte-kit" | 
-                    "__pycache__" | ".venv" | "venv" | ".pytest_cache" |
-                    ".gradle" | ".idea" | ".vscode" | ".DS_Store"
-                )
+                let name = entry
+                    .path()
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                !ccrs_utils::is_ignored_dir(name)
             })
             .build()
     }
