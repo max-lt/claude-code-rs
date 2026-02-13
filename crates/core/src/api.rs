@@ -11,12 +11,12 @@ const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_VERSION: &str = "2023-06-01";
 const MAX_TOKENS: u32 = 16384;
 
-pub const DEFAULT_MODEL: &str = "claude-sonnet-4-5-20250929";
+pub const DEFAULT_MODEL: &str = "claude-sonnet-4-5";
 
 pub const AVAILABLE_MODELS: &[(&str, &str)] = &[
-    ("claude-sonnet-4-5-20250929", "Sonnet 4.5"),
+    ("claude-sonnet-4-5", "Sonnet 4.5"),
     ("claude-opus-4-6", "Opus 4.6"),
-    ("claude-haiku-4-5-20251001", "Haiku 4.5"),
+    ("claude-haiku-4-5", "Haiku 4.5"),
 ];
 
 // ---------------------------------------------------------------------------
