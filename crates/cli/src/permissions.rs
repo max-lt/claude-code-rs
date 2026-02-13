@@ -40,6 +40,7 @@ impl PermissionHandler for InteractivePermissions {
             Tool::Edit { path } => {
                 format!("Edit file: {}", path.display().to_string().bold())
             }
+            Tool::Git => "Git repository operation".to_string(),
             Tool::Glob => "Search files by pattern".to_string(),
             Tool::Grep => "Search file contents".to_string(),
             Tool::Search => "Full-text search across codebase".to_string(),
