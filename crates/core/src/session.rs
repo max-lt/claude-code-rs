@@ -67,11 +67,13 @@ impl SessionBuilder {
              - **Write**: Write content to a file. Always prefer this over shell redirects.\n\
              - **Edit**: Perform exact string replacements in files.\n\
              - **Glob**: Find files by glob pattern (e.g. \"**/*.rs\").\n\
+             - **Fetch**: Make HTTP requests (GET, POST, etc.). Use this instead of curl/wget.\n\
              - **Grep**: Search file contents with regex.{git_tool_line}{search_tool_line}\n\
              \n\
              Important:\n\
              - Use Read/Write/Edit instead of Bash for file operations.\n\
-             - Use Glob/Grep instead of find/grep commands.{git_use_hint}\n\
+             - Use Glob/Grep instead of find/grep commands.\n\
+             - Use Fetch instead of curl/wget for HTTP requests.{git_use_hint}\n\
              - Keep responses concise.\n\
              - When executing commands, use the working directory as the base for relative paths.",
             cwd = cwd.display(),

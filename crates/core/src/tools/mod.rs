@@ -1,5 +1,6 @@
 pub mod bash;
 pub mod edit;
+pub mod fetch;
 pub mod glob;
 pub mod grep;
 pub mod read;
@@ -146,6 +147,7 @@ pub fn default_registry() -> ToolRegistry {
     r.register(edit::EditTool);
     r.register(glob::GlobTool);
     r.register(grep::GrepTool);
+    r.register(fetch::FetchTool::new());
 
     #[cfg(feature = "git")]
     r.register(git::GitTool);
@@ -199,6 +201,14 @@ pub fn to_permission_tool<'a>(
             Some(permission::Tool::Edit {
                 path: Path::new(path),
             })
+        }
+        "Fetch" => {
+            let url = input.get("url").and_then(|u| u.as_str()).unwrap_or("");
+            let method = input
+                .get("method")
+                .and_then(|m| m.as_str())
+                .unwrap_or("GET");
+            Some(permission::Tool::Fetch { url, method })
         }
         "Glob" => Some(permission::Tool::Glob),
         "Grep" => Some(permission::Tool::Grep),
