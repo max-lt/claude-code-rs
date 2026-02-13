@@ -1,3 +1,5 @@
+#![allow(dead_code)] // TODO: re-integrate with TUI (Phase 5)
+
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 

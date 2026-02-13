@@ -1,28 +1,18 @@
-use colored::Colorize;
-
 use super::CommandResult;
 
 pub fn run() -> CommandResult {
-    println!();
-    println!("{}", "Available commands:".bold());
-    println!(
-        "  {} {}  — Show this help message",
-        "/help".cyan(),
-        "/h".dimmed()
+    #[allow(unused_mut)]
+    let mut text = String::from(
+        "\
+Available commands:
+  /help /h   — Show this help message
+  /quit /q   — Exit the application
+  /clear     — Clear conversation history
+  /model     — List or switch models",
     );
-    println!(
-        "  {} {} — Exit the application",
-        "/quit".cyan(),
-        "/q /exit".dimmed()
-    );
-    println!("  {}       — Clear conversation history", "/clear".cyan());
-    println!("  {}       — List or switch models", "/model".cyan());
-    #[cfg(feature = "voice")]
-    println!(
-        "  {}         — Record and transcribe voice input",
-        "/rec".cyan()
-    );
-    println!();
 
-    CommandResult::Continue
+    #[cfg(feature = "voice")]
+    text.push_str("\n  /rec       — Record and transcribe voice input");
+
+    CommandResult::Info(text)
 }

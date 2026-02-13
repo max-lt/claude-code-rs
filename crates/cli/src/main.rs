@@ -1,64 +1,15 @@
 mod commands;
 mod permissions;
+mod tui;
 mod ui;
 
 use anyhow::Result;
-use colored::Colorize;
 
 use claude_code_core::config::{Credentials, TokenType};
-use claude_code_core::event::EventHandler;
 use claude_code_core::session::SessionBuilder;
 use claude_code_core::{auth, config};
 
-use commands::CommandResult;
-use permissions::InteractivePermissions;
-
-struct CliEventHandler;
-
-impl EventHandler for CliEventHandler {
-    fn on_text(&mut self, text: &str) {
-        print!("{text}");
-    }
-
-    fn on_error(&mut self, message: &str) {
-        eprintln!("\n{}: {message}", "API error".red());
-    }
-
-    fn on_tool_use_start(&mut self, name: &str, _id: &str) {
-        println!("\n{} {}", "Tool:".yellow().bold(), name.bold());
-    }
-
-    fn on_tool_use_end(&mut self, _name: &str) {}
-
-    fn on_tool_executing(&mut self, _name: &str, input: &serde_json::Value) {
-        let display = match input.get("command").and_then(|c| c.as_str()) {
-            Some(cmd) => cmd.to_string(),
-            None => serde_json::to_string_pretty(input).unwrap_or_default(),
-        };
-
-        println!("{}", display.dimmed());
-    }
-
-    fn on_tool_result(&mut self, _name: &str, output: &str, is_error: bool) {
-        const MAX_LINES: usize = 5;
-
-        let lines: Vec<&str> = output.lines().collect();
-        let total_lines = lines.len();
-
-        let display = if total_lines > MAX_LINES {
-            let preview: String = lines[..MAX_LINES].join("\n");
-            format!("{preview}\n... ({total_lines} lines total)")
-        } else {
-            output.to_string()
-        };
-
-        if is_error {
-            eprintln!("{}", display.red());
-        } else {
-            println!("{}", display.dimmed());
-        }
-    }
-}
+use permissions::ChannelPermissions;
 
 async fn login() -> Result<Credentials> {
     let method = ui::prompt_login_method()?;
@@ -93,7 +44,7 @@ async fn get_access_token(creds: &Credentials) -> Result<(String, bool, Option<C
     match creds.token_type() {
         TokenType::OAuthAccess => Ok((creds.token.clone(), true, None)),
         TokenType::OAuthRefresh => {
-            println!("{}", "Refreshing access token...".dimmed());
+            println!("Refreshing access token...");
             let (access_token, updated_creds) = auth::refresh_access_token(creds).await?;
             Ok((access_token, true, Some(updated_creds)))
         }
@@ -103,17 +54,17 @@ async fn get_access_token(creds: &Credentials) -> Result<(String, bool, Option<C
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    ui::print_welcome();
+    println!("claude-code-rs v0.1.0\n");
 
     let creds = match config::load_credentials()? {
         Some(c) => {
-            println!("{}", "Loaded saved credentials.".dimmed());
+            println!("Loaded saved credentials.");
             c
         }
         None => {
             let c = login().await?;
             config::save_credentials(&c)?;
-            println!("{}", "Credentials saved.".dimmed());
+            println!("Credentials saved.");
             c
         }
     };
@@ -126,94 +77,11 @@ async fn main() -> Result<()> {
 
     let cwd = std::env::current_dir()?;
     let settings = config::load_settings(&cwd);
-    let perms = InteractivePermissions::new(settings.permissions, cwd);
 
-    let mut session = SessionBuilder::new(access_token, is_oauth).permissions(perms)?;
-    let mut handler = CliEventHandler;
+    let (ui_tx, ui_rx) = tokio::sync::mpsc::unbounded_channel();
+    let perms = ChannelPermissions::new(settings.permissions, cwd, ui_tx.clone());
 
-    loop {
-        let input = match ui::read_user_input()? {
-            Some(text) => text,
-            None => continue,
-        };
+    let session = SessionBuilder::new(access_token, is_oauth).permissions(perms)?;
 
-        // Handle async commands first
-        #[cfg(feature = "voice")]
-        if input == "/rec" {
-            match commands::rec::run().await {
-                Ok(CommandResult::SendMessage(text)) => {
-                    println!();
-
-                    match session.send_message(&text, &mut handler).await {
-                        Ok(usage) => {
-                            println!();
-                            println!(
-                                "{}",
-                                format!(
-                                    "[tokens: {} in, {} out]",
-                                    usage.input_tokens, usage.output_tokens
-                                )
-                                .dimmed()
-                            );
-                        }
-                        Err(e) => {
-                            eprintln!("{}: {e}", "Error".red());
-                        }
-                    }
-
-                    println!();
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    eprintln!("{}: {e}", "Error".red());
-                }
-            }
-
-            continue;
-        }
-
-        // Try slash commands first
-        if let Some(result) = commands::handle_command(&input, session.model()) {
-            match result {
-                CommandResult::Exit => break,
-                CommandResult::SetModel { id, label } => {
-                    session.set_model(id);
-                    println!("{}", format!("Switched to {label}.").dimmed());
-                    continue;
-                }
-                CommandResult::Continue => {
-                    if input == "/clear" {
-                        session.clear();
-                    }
-
-                    continue;
-                }
-                #[cfg(feature = "voice")]
-                CommandResult::SendMessage(_) => unreachable!(),
-            }
-        }
-
-        println!();
-
-        match session.send_message(&input, &mut handler).await {
-            Ok(usage) => {
-                println!();
-                println!(
-                    "{}",
-                    format!(
-                        "[tokens: {} in, {} out]",
-                        usage.input_tokens, usage.output_tokens
-                    )
-                    .dimmed()
-                );
-            }
-            Err(e) => {
-                eprintln!("{}: {e}", "Error".red());
-            }
-        }
-
-        println!();
-    }
-
-    Ok(())
+    tui::run(session, ui_tx, ui_rx)
 }

@@ -1,5 +1,3 @@
-use colored::Colorize;
-
 use claude_code_core::api::{AVAILABLE_MODELS, DEFAULT_MODEL};
 
 use super::CommandResult;
@@ -8,11 +6,10 @@ pub fn run(args: &str, current_model: &str) -> CommandResult {
     let requested = args.trim();
 
     if requested.is_empty() {
-        list_models(current_model);
-        return CommandResult::Continue;
+        return CommandResult::Info(list_models(current_model));
     }
 
-    // Try exact match first, then prefix match
+    // Try exact match first, then substring match
     let matched = AVAILABLE_MODELS
         .iter()
         .find(|(id, _)| *id == requested)
@@ -27,17 +24,15 @@ pub fn run(args: &str, current_model: &str) -> CommandResult {
             id: id.to_string(),
             label: label.to_string(),
         },
-        None => {
-            eprintln!("Unknown model: {requested}");
-            list_models(current_model);
-            CommandResult::Continue
-        }
+        None => CommandResult::Info(format!(
+            "Unknown model: {requested}\n{}",
+            list_models(current_model)
+        )),
     }
 }
 
-fn list_models(current_model: &str) {
-    println!();
-    println!("{}", "Available models:".bold());
+fn list_models(current_model: &str) -> String {
+    let mut text = String::from("Available models:\n");
 
     for (id, label) in AVAILABLE_MODELS {
         let marker = if *id == current_model {
@@ -45,21 +40,16 @@ fn list_models(current_model: &str) {
         } else {
             ""
         };
+
         let default = if *id == DEFAULT_MODEL {
             " [default]"
         } else {
             ""
         };
 
-        println!(
-            "  {} — {}{}{}",
-            id.cyan(),
-            label,
-            default.dimmed(),
-            marker.green().bold()
-        );
+        text.push_str(&format!("  {id} — {label}{default}{marker}\n"));
     }
 
-    println!();
-    println!("Usage: {}", "/model <name>".dimmed());
+    text.push_str("\nUsage: /model <name>");
+    text
 }
