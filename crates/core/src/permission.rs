@@ -9,6 +9,7 @@ pub enum Tool<'a> {
     Read { path: &'a Path },
     Write { path: &'a Path },
     Edit { path: &'a Path },
+    Fetch { url: &'a str, method: &'a str },
     Git,
     Glob,
     Grep,
