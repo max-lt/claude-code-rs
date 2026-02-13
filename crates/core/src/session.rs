@@ -46,6 +46,12 @@ impl SessionBuilder {
 
         let system_prompt = "You are Claude Code, Anthropic's official CLI for Claude.".to_string();
 
+        let git_tool_line = if cfg!(feature = "git") {
+            "\n             - **Git**: Git operations (status, diff, log, branch) via libgit2. Prefer this over `git` CLI."
+        } else {
+            ""
+        };
+
         let search_tool_line = if cfg!(feature = "search") {
             "\n             - **Search**: Full-text search across the codebase with BM25 ranking."
         } else {
@@ -56,19 +62,24 @@ impl SessionBuilder {
             "Working directory: {cwd}\n\
              \n\
              You have access to these tools:\n\
-             - **Bash**: Execute shell commands. Use for running programs, git, builds, etc.\n\
+             - **Bash**: Execute shell commands. Use for running programs, builds, etc.\n\
              - **Read**: Read a file's contents. Always prefer this over `cat` or `head`.\n\
              - **Write**: Write content to a file. Always prefer this over shell redirects.\n\
              - **Edit**: Perform exact string replacements in files.\n\
              - **Glob**: Find files by glob pattern (e.g. \"**/*.rs\").\n\
-             - **Grep**: Search file contents with regex.{search_tool_line}\n\
+             - **Grep**: Search file contents with regex.{git_tool_line}{search_tool_line}\n\
              \n\
              Important:\n\
              - Use Read/Write/Edit instead of Bash for file operations.\n\
-             - Use Glob/Grep instead of find/grep commands.\n\
+             - Use Glob/Grep instead of find/grep commands.{git_use_hint}\n\
              - Keep responses concise.\n\
              - When executing commands, use the working directory as the base for relative paths.",
-            cwd = cwd.display()
+            cwd = cwd.display(),
+            git_use_hint = if cfg!(feature = "git") {
+                "\n             - Use the Git tool instead of `git` CLI for status, diff, log, and branch operations."
+            } else {
+                ""
+            },
         );
 
         let bootstrap_messages = vec![

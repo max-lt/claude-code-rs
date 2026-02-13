@@ -8,7 +8,8 @@ name = "ccrs"
 path = "src/main.rs"
 
 [features]
-default = ["search", "voice"]
+default = ["git", "search", "voice"]
+git = ["claude-code-core/git"]
 search = ["claude-code-core/search"]
 voice = ["dep:cpal", "dep:hound"]
 
