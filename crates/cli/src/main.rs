@@ -137,6 +137,41 @@ async fn main() -> Result<()> {
             None => continue,
         };
 
+        // Handle async commands first
+        #[cfg(feature = "voice")]
+        if input == "/rec" {
+            match commands::rec::run().await {
+                Ok(CommandResult::SendMessage(text)) => {
+                    println!();
+
+                    match session.send_message(&text, &mut handler).await {
+                        Ok(usage) => {
+                            println!();
+                            println!(
+                                "{}",
+                                format!(
+                                    "[tokens: {} in, {} out]",
+                                    usage.input_tokens, usage.output_tokens
+                                )
+                                .dimmed()
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("{}: {e}", "Error".red());
+                        }
+                    }
+
+                    println!();
+                }
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("{}: {e}", "Error".red());
+                }
+            }
+
+            continue;
+        }
+
         // Try slash commands first
         if let Some(result) = commands::handle_command(&input, session.model()) {
             match result {
@@ -153,6 +188,8 @@ async fn main() -> Result<()> {
 
                     continue;
                 }
+                #[cfg(feature = "voice")]
+                CommandResult::SendMessage(_) => unreachable!(),
             }
         }
 

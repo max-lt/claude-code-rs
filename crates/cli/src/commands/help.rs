@@ -17,6 +17,11 @@ pub fn run() -> CommandResult {
     );
     println!("  {}       — Clear conversation history", "/clear".cyan());
     println!("  {}       — List or switch models", "/model".cyan());
+    #[cfg(feature = "voice")]
+    println!(
+        "  {}         — Record and transcribe voice input",
+        "/rec".cyan()
+    );
     println!();
 
     CommandResult::Continue

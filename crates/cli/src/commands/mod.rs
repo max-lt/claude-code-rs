@@ -2,11 +2,15 @@ mod clear;
 mod help;
 mod model;
 mod quit;
+#[cfg(feature = "voice")]
+pub mod rec;
 
 pub enum CommandResult {
     Continue,
     Exit,
     SetModel { id: String, label: String },
+    #[cfg(feature = "voice")]
+    SendMessage(String),
 }
 
 /// Try to handle input as a slash command.
