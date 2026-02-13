@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use reqwest_eventsource::{Event, EventSource};
@@ -225,8 +227,13 @@ pub(crate) struct ApiClient {
 
 impl ApiClient {
     pub(crate) fn new(access_token: String, is_oauth: bool) -> Self {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(300))
+            .build()
+            .expect("failed to build HTTP client");
+
         Self {
-            client: reqwest::Client::new(),
+            client,
             access_token,
             is_oauth,
             model: DEFAULT_MODEL.to_string(),

@@ -128,7 +128,7 @@ async fn main() -> Result<()> {
     let settings = config::load_settings(&cwd);
     let perms = InteractivePermissions::new(settings.permissions, cwd);
 
-    let mut session = SessionBuilder::new(access_token, is_oauth).permissions(perms);
+    let mut session = SessionBuilder::new(access_token, is_oauth).permissions(perms)?;
     let mut handler = CliEventHandler;
 
     loop {
