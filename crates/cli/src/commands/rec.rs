@@ -18,19 +18,10 @@ pub async fn run() -> Result<CommandResult> {
     eprintln!("Transcribing…");
     let text = transcribe(&api_key, wav).await?;
 
-    eprintln!();
-    println!("{text}");
-    eprint!("Press Enter to send, or type a replacement: ");
-
-    let mut line = String::new();
-    std::io::stdin().read_line(&mut line)?;
-    let line = line.trim();
-
-    let final_text = if line.is_empty() {
-        text
-    } else {
-        line.to_string()
-    };
+    let final_text: String = dialoguer::Input::new()
+        .with_prompt(">")
+        .with_initial_text(&text)
+        .interact_text()?;
 
     Ok(CommandResult::SendMessage(final_text))
 }
