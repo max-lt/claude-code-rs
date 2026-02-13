@@ -418,7 +418,7 @@ mod tests {
 
         assert_eq!(
             merged.permissions.check(
-                &Tool::FileRead {
+                &Tool::Read {
                     path: Path::new("/shared/libs/util.rs")
                 },
                 project
@@ -427,7 +427,7 @@ mod tests {
         );
         assert_eq!(
             merged.permissions.check(
-                &Tool::FileWrite {
+                &Tool::Write {
                     path: Path::new("/Users/max/other-project/main.rs")
                 },
                 project
@@ -436,7 +436,7 @@ mod tests {
         );
         assert_eq!(
             merged.permissions.check(
-                &Tool::FileRead {
+                &Tool::Read {
                     path: Path::new("/etc/passwd")
                 },
                 project
@@ -742,7 +742,7 @@ mod tests {
         // File in additional directory → allowed
         assert_eq!(
             settings.permissions.check(
-                &Tool::FileRead {
+                &Tool::Read {
                     path: Path::new(
                         "/Users/max/Documents/workspaces/OPENWORKERS/openworkers-dash/src/main.rs"
                     )
@@ -756,7 +756,7 @@ mod tests {
         let project_file = tmp.path().join("src/lib.rs");
         assert_eq!(
             settings.permissions.check(
-                &Tool::FileWrite {
+                &Tool::Write {
                     path: &project_file
                 },
                 project_dir
@@ -767,7 +767,7 @@ mod tests {
         // File outside all allowed dirs → should prompt
         assert_eq!(
             settings.permissions.check(
-                &Tool::FileRead {
+                &Tool::Read {
                     path: Path::new("/etc/shadow")
                 },
                 project_dir

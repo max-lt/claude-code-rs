@@ -6,8 +6,11 @@ use serde::Deserialize;
 #[non_exhaustive]
 pub enum Tool<'a> {
     Bash { command: &'a str },
-    FileRead { path: &'a Path },
-    FileWrite { path: &'a Path },
+    Read { path: &'a Path },
+    Write { path: &'a Path },
+    Edit { path: &'a Path },
+    Glob,
+    Grep,
 }
 
 /// Determines whether a given tool invocation is allowed.
@@ -84,9 +87,15 @@ impl PermissionConfig {
             return Some(true);
         }
 
+        // Read-only tools (Glob, Grep) are always allowed
+        match tool {
+            Tool::Glob | Tool::Grep => return Some(true),
+            _ => {}
+        }
+
         // File operations in allowed directories are auto-allowed
         match tool {
-            Tool::FileRead { path } | Tool::FileWrite { path } => {
+            Tool::Read { path } | Tool::Write { path } | Tool::Edit { path } => {
                 let resolved = resolve_path(path, project_dir);
 
                 if resolved.starts_with(project_dir) {
@@ -120,10 +129,9 @@ fn rule_matches(rule: &str, tool: &Tool<'_>) -> bool {
 
     match (tool_name, tool) {
         ("Bash", Tool::Bash { command }) => pattern_matches(command, pattern),
-        ("Read", Tool::FileRead { path }) => pattern_matches(&path.display().to_string(), pattern),
-        ("Write", Tool::FileWrite { path }) => {
-            pattern_matches(&path.display().to_string(), pattern)
-        }
+        ("Read", Tool::Read { path }) => pattern_matches(&path.display().to_string(), pattern),
+        ("Write", Tool::Write { path }) => pattern_matches(&path.display().to_string(), pattern),
+        ("Edit", Tool::Edit { path }) => pattern_matches(&path.display().to_string(), pattern),
         _ => false,
     }
 }
@@ -261,7 +269,7 @@ mod tests {
 
         assert_eq!(
             config.check(
-                &Tool::FileRead {
+                &Tool::Read {
                     path: Path::new("/project/src/main.rs")
                 },
                 project
@@ -270,7 +278,7 @@ mod tests {
         );
         assert_eq!(
             config.check(
-                &Tool::FileRead {
+                &Tool::Read {
                     path: Path::new("/other/secret.txt")
                 },
                 project
@@ -290,7 +298,7 @@ mod tests {
 
         assert_eq!(
             config.check(
-                &Tool::FileWrite {
+                &Tool::Write {
                     path: Path::new("/extra/allowed/file.txt")
                 },
                 project
@@ -321,6 +329,40 @@ mod tests {
                 project
             ),
             Some(false)
+        );
+    }
+
+    #[test]
+    fn test_glob_grep_always_allowed() {
+        let config = PermissionConfig::default();
+        let project = Path::new("/project");
+
+        assert_eq!(config.check(&Tool::Glob, project), Some(true));
+        assert_eq!(config.check(&Tool::Grep, project), Some(true));
+    }
+
+    #[test]
+    fn test_edit_in_project_dir() {
+        let config = PermissionConfig::default();
+        let project = Path::new("/project");
+
+        assert_eq!(
+            config.check(
+                &Tool::Edit {
+                    path: Path::new("/project/src/lib.rs")
+                },
+                project
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            config.check(
+                &Tool::Edit {
+                    path: Path::new("/other/file.rs")
+                },
+                project
+            ),
+            None
         );
     }
 }
