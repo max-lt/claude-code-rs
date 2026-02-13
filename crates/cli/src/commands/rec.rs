@@ -135,7 +135,7 @@ async fn transcribe(api_key: &str, wav_data: Vec<u8>) -> Result<String> {
         .mime_str("audio/wav")?;
 
     let form = reqwest::multipart::Form::new()
-        .text("model", "mistral-large-pixtral-2501")
+        .text("model", "voxtral-mini-2602")
         .part("file", part);
 
     let client = reqwest::Client::new();
