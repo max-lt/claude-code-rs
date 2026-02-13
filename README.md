@@ -10,9 +10,10 @@ The official Claude Code CLI weighs **175 MB** on disk and routinely consumes **
 
 ## Features
 
-- **Full tool suite** — Bash, Read, Write, Edit, Glob, Grep (same names and schemas as Claude Code)
+- **Full tool suite** — Bash, Git, Read, Write, Edit, Glob, Grep, Search
 - **Agentic loop** — tool_use → permission check → execute → send result → continue
 - **Interactive permissions** — colored prompts with rule-based auto-allow
+- **Smart Git integration** — read-only commands (status, log, diff) auto-approved, write operations require permission
 - **Settings compatibility** — reads `.claude/settings.json` and `.claude/settings.local.json` (same format as Claude Code)
 - **OAuth PKCE** — same auth flow as the official CLI, with refresh token rotation
 - **API key authentication**
@@ -52,12 +53,26 @@ Create `.claude/settings.local.json` in your project:
 ```json
 {
   "permissions": {
-    "allow": ["Bash(cargo:*)", "Bash(git:*)"],
+    "allow": [
+      "Bash(cargo:*)", 
+      "Bash(git:*)",
+      "Git(push:*)",
+      "Git(commit:*)"
+    ],
     "deny": ["Bash(rm -rf:*)"],
     "additionalDirectories": ["/path/to/other/project"]
   }
 }
 ```
+
+**Auto-approved tools:**
+- `Glob`, `Grep`, `Search` — always allowed
+- `Read`, `Write`, `Edit` — auto-allowed in project directory
+- `Git status`, `Git log`, `Git diff`, etc. — read-only git commands
+
+**Require permission:**
+- `Bash` commands (unless explicitly allowed)
+- `Git commit`, `Git push`, `Git reset`, etc. — write operations
 
 Three layers, merged in order:
 
@@ -69,8 +84,9 @@ Three layers, merged in order:
 
 ```
 crates/
-  core/   API client, streaming, tools (Bash/Read/Write/Edit/Glob/Grep), permissions, auth
+  core/   API client, streaming, tools (Bash/Git/Read/Write/Edit/Glob/Grep/Search), permissions, auth
   cli/    Terminal UI, interactive permissions, slash commands
+  search/ Tantivy-based semantic search
 ```
 
 ## Credentials
