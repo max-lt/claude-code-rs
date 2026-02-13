@@ -8,6 +8,7 @@ search = ["dep:ccrs-search"]
 git = ["dep:ccrs-git"]
 
 [dependencies]
+ccrs-utils = { path = "../utils" }
 ccrs-search = { path = "../search", optional = true }
 ccrs-git = { path = "../git", optional = true }
 tokio = { version = "1", features = ["full"] }

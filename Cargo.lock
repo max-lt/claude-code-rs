@@ -379,12 +379,17 @@ name = "ccrs-search"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ccrs-utils",
  "dirs",
  "fastembed",
  "ignore",
  "tantivy",
  "tempfile",
 ]
+
+[[package]]
+name = "ccrs-utils"
+version = "0.1.0"
 
 [[package]]
 name = "census"
@@ -449,6 +454,7 @@ dependencies = [
  "base64 0.22.1",
  "ccrs-git",
  "ccrs-search",
+ "ccrs-utils",
  "dirs",
  "futures",
  "futures-core",

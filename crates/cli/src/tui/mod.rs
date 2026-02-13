@@ -348,14 +348,10 @@ pub fn run(
 
     // Terminal setup
     crossterm::terminal::enable_raw_mode()?;
+    crossterm::execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
 
     let backend = CrosstermBackend::new(std::io::stdout());
-    let mut terminal = Terminal::with_options(
-        backend,
-        ratatui::TerminalOptions {
-            viewport: ratatui::Viewport::Fullscreen,
-        },
-    )?;
+    let mut terminal = Terminal::new(backend)?;
 
     // Restore terminal on panic
     let original_hook = std::panic::take_hook();
@@ -392,7 +388,7 @@ pub fn run(
 
     // Cleanup
     crossterm::terminal::disable_raw_mode()?;
-    terminal.clear()?;
+    crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
 
     Ok(())
 }

@@ -43,32 +43,57 @@ impl ToolDef for GlobTool {
             None => cwd.to_path_buf(),
         };
 
-        let full_pattern = if pattern.starts_with('/') {
-            pattern.to_string()
-        } else {
-            format!("{}/{pattern}", base_dir.display())
-        };
-
-        let entries = match glob::glob(&full_pattern) {
-            Ok(paths) => paths,
+        // Compile glob pattern
+        let glob_pattern = match glob::Pattern::new(pattern) {
+            Ok(p) => p,
             Err(e) => return ToolOutput::error(format!("Invalid glob pattern: {e}")),
         };
 
         let mut files: Vec<(std::path::PathBuf, std::time::SystemTime)> = Vec::new();
 
-        for entry in entries {
-            let path = match entry {
-                Ok(p) => p,
+        // Use ignore::WalkBuilder with the same filters as search
+        let walker = ignore::WalkBuilder::new(&base_dir)
+            .hidden(false)
+            .git_ignore(true)
+            .git_global(false)
+            .git_exclude(false)
+            .add_custom_ignore_filename(".claudeignore")
+            .filter_entry(|entry| {
+                let name = entry
+                    .path()
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                !ccrs_utils::is_ignored_dir(name)
+            })
+            .build();
+
+        for result in walker {
+            let entry = match result {
+                Ok(e) => e,
                 Err(_) => continue,
             };
 
-            if path.is_file() {
+            let path = entry.path();
+
+            if !path.is_file() {
+                continue;
+            }
+
+            // Match against glob pattern
+            // Use path relative to base_dir for matching
+            let rel_path = match path.strip_prefix(&base_dir) {
+                Ok(p) => p,
+                Err(_) => path,
+            };
+
+            if glob_pattern.matches_path(rel_path) {
                 let mtime = path
                     .metadata()
                     .and_then(|m| m.modified())
                     .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
 
-                files.push((path, mtime));
+                files.push((path.to_path_buf(), mtime));
             }
         }
 
