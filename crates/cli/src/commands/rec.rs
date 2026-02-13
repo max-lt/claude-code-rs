@@ -36,7 +36,7 @@ fn record_audio() -> Result<(Vec<f32>, u32)> {
         .ok_or_else(|| anyhow!("No input device available"))?;
 
     let config = device.default_input_config()?;
-    let sample_rate = config.sample_rate().0;
+    let sample_rate = config.sample_rate();
     let sample_format = config.sample_format();
     let channels = config.channels() as usize;
 

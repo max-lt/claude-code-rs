@@ -117,20 +117,38 @@ impl App {
             }
 
             KeyCode::Char(c) => {
-                self.input.insert(self.cursor, c);
+                let byte_pos = self
+                    .input
+                    .char_indices()
+                    .nth(self.cursor)
+                    .map(|(i, _)| i)
+                    .unwrap_or(self.input.len());
+                self.input.insert(byte_pos, c);
                 self.cursor += 1;
             }
 
             KeyCode::Backspace => {
                 if self.cursor > 0 {
                     self.cursor -= 1;
-                    self.input.remove(self.cursor);
+                    let byte_pos = self
+                        .input
+                        .char_indices()
+                        .nth(self.cursor)
+                        .map(|(i, _)| i)
+                        .unwrap_or(self.input.len());
+                    self.input.remove(byte_pos);
                 }
             }
 
             KeyCode::Delete => {
-                if self.cursor < self.input.len() {
-                    self.input.remove(self.cursor);
+                if self.cursor < self.input.chars().count() {
+                    let byte_pos = self
+                        .input
+                        .char_indices()
+                        .nth(self.cursor)
+                        .map(|(i, _)| i)
+                        .unwrap_or(self.input.len());
+                    self.input.remove(byte_pos);
                 }
             }
 
@@ -139,13 +157,13 @@ impl App {
             }
 
             KeyCode::Right => {
-                if self.cursor < self.input.len() {
+                if self.cursor < self.input.chars().count() {
                     self.cursor += 1;
                 }
             }
 
             KeyCode::Home => self.cursor = 0,
-            KeyCode::End => self.cursor = self.input.len(),
+            KeyCode::End => self.cursor = self.input.chars().count(),
 
             KeyCode::Up if key.modifiers.contains(KeyModifiers::SHIFT) => {
                 self.scroll = self.scroll.saturating_sub(1);

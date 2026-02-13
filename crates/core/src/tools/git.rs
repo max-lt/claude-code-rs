@@ -75,24 +75,15 @@ impl ToolDef for GitTool {
                     Some(f) => f,
                     None => return ToolOutput::error("diff requires 'from' parameter"),
                 };
-                let to = input
-                    .get("to")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("HEAD");
+                let to = input.get("to").and_then(|v| v.as_str()).unwrap_or("HEAD");
                 exec_diff_range(cwd, from, to)
             }
             "log" => {
-                let limit = input
-                    .get("limit")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(20) as usize;
+                let limit = input.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
                 exec_log(cwd, limit)
             }
             "show" => {
-                let rev = input
-                    .get("rev")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("HEAD");
+                let rev = input.get("rev").and_then(|v| v.as_str()).unwrap_or("HEAD");
                 exec_show(cwd, rev)
             }
             "blame" => {
@@ -100,8 +91,14 @@ impl ToolDef for GitTool {
                     Some(f) => f,
                     None => return ToolOutput::error("blame requires 'file_path' parameter"),
                 };
-                let start = input.get("start_line").and_then(|v| v.as_u64()).map(|v| v as usize);
-                let end = input.get("end_line").and_then(|v| v.as_u64()).map(|v| v as usize);
+                let start = input
+                    .get("start_line")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as usize);
+                let end = input
+                    .get("end_line")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as usize);
                 exec_blame(cwd, file_path, start, end)
             }
             "branch" => {
@@ -124,10 +121,7 @@ fn exec_status(cwd: &Path) -> ToolOutput {
             if entries.is_empty() {
                 return ToolOutput::success("Working tree clean.");
             }
-            let out: String = entries
-                .iter()
-                .map(|e| format!("{e}\n"))
-                .collect();
+            let out: String = entries.iter().map(|e| format!("{e}\n")).collect();
             ToolOutput::success(out.trim_end())
         }
         Err(e) => ToolOutput::error(format!("git status failed: {e}")),
@@ -219,9 +213,7 @@ fn exec_show(cwd: &Path, rev: &str) -> ToolOutput {
 
             out.push_str(&format!(
                 "\n{} file(s) changed, {} insertion(s), {} deletion(s)",
-                detail.stat.files_changed,
-                detail.stat.insertions,
-                detail.stat.deletions,
+                detail.stat.files_changed, detail.stat.insertions, detail.stat.deletions,
             ));
 
             ToolOutput::success(out)
@@ -230,12 +222,7 @@ fn exec_show(cwd: &Path, rev: &str) -> ToolOutput {
     }
 }
 
-fn exec_blame(
-    cwd: &Path,
-    file_path: &str,
-    start: Option<usize>,
-    end: Option<usize>,
-) -> ToolOutput {
+fn exec_blame(cwd: &Path, file_path: &str, start: Option<usize>, end: Option<usize>) -> ToolOutput {
     let result = match (start, end) {
         (Some(s), Some(e)) => ccrs_git::blame_range(cwd, file_path, s, e),
         _ => ccrs_git::blame(cwd, file_path),

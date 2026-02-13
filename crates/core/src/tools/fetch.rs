@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE, USER_AGENT};
+use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue, USER_AGENT};
 
 use super::{ToolDef, ToolOutput};
 
@@ -108,7 +108,9 @@ impl ToolDef for FetchTool {
             for (key, val) in headers_obj {
                 let name = match key.parse::<HeaderName>() {
                     Ok(n) => n,
-                    Err(e) => return ToolOutput::error(format!("Invalid header name '{key}': {e}")),
+                    Err(e) => {
+                        return ToolOutput::error(format!("Invalid header name '{key}': {e}"));
+                    }
                 };
                 let value = match val.as_str() {
                     Some(v) => match v.parse::<HeaderValue>() {
@@ -116,7 +118,7 @@ impl ToolDef for FetchTool {
                         Err(e) => {
                             return ToolOutput::error(format!(
                                 "Invalid header value for '{key}': {e}"
-                            ))
+                            ));
                         }
                     },
                     None => continue,
@@ -146,7 +148,11 @@ impl ToolDef for FetchTool {
         };
 
         let status = response.status();
-        let status_line = format!("{} {}", status.as_u16(), status.canonical_reason().unwrap_or(""));
+        let status_line = format!(
+            "{} {}",
+            status.as_u16(),
+            status.canonical_reason().unwrap_or("")
+        );
 
         // Collect response headers
         let mut resp_headers = String::new();
@@ -165,9 +171,7 @@ impl ToolDef for FetchTool {
 
         // HEAD requests: no body
         if method == reqwest::Method::HEAD {
-            return ToolOutput::success(format!(
-                "HTTP {status_line}\n\n{resp_headers}"
-            ));
+            return ToolOutput::success(format!("HTTP {status_line}\n\n{resp_headers}"));
         }
 
         // Read body with size limit
@@ -191,7 +195,7 @@ impl ToolDef for FetchTool {
             && !content_type.contains("html")
             && !content_type.contains("css")
             && !content_type.contains("svg")
-            && body_slice.iter().any(|&b| b == 0);
+            && body_slice.contains(&0);
 
         let body_text = if is_binary {
             format!("<binary data, {} bytes>", body_bytes.len())

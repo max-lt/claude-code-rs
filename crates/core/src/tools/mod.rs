@@ -1,11 +1,11 @@
 pub mod bash;
 pub mod edit;
 pub mod fetch;
+#[cfg(feature = "git")]
+pub mod git;
 pub mod glob;
 pub mod grep;
 pub mod read;
-#[cfg(feature = "git")]
-pub mod git;
 #[cfg(feature = "search")]
 pub mod search;
 pub mod write;

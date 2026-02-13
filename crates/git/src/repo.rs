@@ -101,7 +101,10 @@ mod tests {
     fn test_repo_root() {
         let (dir, _) = init_repo();
         let root = repo_root(dir.path()).unwrap();
-        assert_eq!(root.canonicalize().unwrap(), dir.path().canonicalize().unwrap());
+        assert_eq!(
+            root.canonicalize().unwrap(),
+            dir.path().canonicalize().unwrap()
+        );
     }
 
     #[test]

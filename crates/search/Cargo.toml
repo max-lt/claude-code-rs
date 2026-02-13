@@ -8,7 +8,7 @@ ccrs-utils = { path = "../utils" }
 tantivy = "0.25"
 ignore = "0.4"
 anyhow = "1"
-fastembed = "4"
+fastembed = "5"
 dirs = "6"
 
 [dev-dependencies]

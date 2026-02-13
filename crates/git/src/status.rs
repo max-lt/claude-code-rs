@@ -41,10 +41,7 @@ pub fn status(path: &Path) -> Result<Vec<StatusEntry>> {
 
     for entry in statuses.iter() {
         let s = entry.status();
-        let path = entry
-            .path()
-            .unwrap_or("<non-utf8>")
-            .to_string();
+        let path = entry.path().unwrap_or("<non-utf8>").to_string();
 
         let index = index_status(s);
         let worktree = worktree_status(s);
@@ -108,8 +105,12 @@ impl std::fmt::Display for FileStatus {
 
 impl std::fmt::Display for StatusEntry {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let idx = self.index.map_or(' ', |s| s.to_string().chars().next().unwrap_or(' '));
-        let wt = self.worktree.map_or(' ', |s| s.to_string().chars().next().unwrap_or(' '));
+        let idx = self
+            .index
+            .map_or(' ', |s| s.to_string().chars().next().unwrap_or(' '));
+        let wt = self
+            .worktree
+            .map_or(' ', |s| s.to_string().chars().next().unwrap_or(' '));
         write!(f, "{idx}{wt} {}", self.path)
     }
 }
