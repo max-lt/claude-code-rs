@@ -3,6 +3,8 @@ pub mod edit;
 pub mod glob;
 pub mod grep;
 pub mod read;
+#[cfg(feature = "search")]
+pub mod search;
 pub mod write;
 
 use std::future::Future;
@@ -142,6 +144,10 @@ pub fn default_registry() -> ToolRegistry {
     r.register(edit::EditTool);
     r.register(glob::GlobTool);
     r.register(grep::GrepTool);
+
+    #[cfg(feature = "search")]
+    r.register(search::SearchTool::new());
+
     r
 }
 
@@ -191,6 +197,7 @@ pub fn to_permission_tool<'a>(
         }
         "Glob" => Some(permission::Tool::Glob),
         "Grep" => Some(permission::Tool::Grep),
+        "Search" => Some(permission::Tool::Search),
         _ => None,
     }
 }

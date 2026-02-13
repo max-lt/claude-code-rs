@@ -46,6 +46,12 @@ impl SessionBuilder {
 
         let system_prompt = "You are Claude Code, Anthropic's official CLI for Claude.".to_string();
 
+        let search_tool_line = if cfg!(feature = "search") {
+            "\n             - **Search**: Full-text search across the codebase with BM25 ranking."
+        } else {
+            ""
+        };
+
         let context_prompt = format!(
             "Working directory: {cwd}\n\
              \n\
@@ -55,7 +61,7 @@ impl SessionBuilder {
              - **Write**: Write content to a file. Always prefer this over shell redirects.\n\
              - **Edit**: Perform exact string replacements in files.\n\
              - **Glob**: Find files by glob pattern (e.g. \"**/*.rs\").\n\
-             - **Grep**: Search file contents with regex.\n\
+             - **Grep**: Search file contents with regex.{search_tool_line}\n\
              \n\
              Important:\n\
              - Use Read/Write/Edit instead of Bash for file operations.\n\

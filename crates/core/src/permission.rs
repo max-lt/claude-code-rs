@@ -11,6 +11,7 @@ pub enum Tool<'a> {
     Edit { path: &'a Path },
     Glob,
     Grep,
+    Search,
 }
 
 /// Determines whether a given tool invocation is allowed.
@@ -89,7 +90,7 @@ impl PermissionConfig {
 
         // Read-only tools (Glob, Grep) are always allowed
         match tool {
-            Tool::Glob | Tool::Grep => return Some(true),
+            Tool::Glob | Tool::Grep | Tool::Search => return Some(true),
             _ => {}
         }
 
