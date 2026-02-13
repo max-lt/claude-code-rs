@@ -3,6 +3,8 @@ pub mod edit;
 pub mod glob;
 pub mod grep;
 pub mod read;
+#[cfg(feature = "git")]
+pub mod git;
 #[cfg(feature = "search")]
 pub mod search;
 pub mod write;
@@ -145,6 +147,9 @@ pub fn default_registry() -> ToolRegistry {
     r.register(glob::GlobTool);
     r.register(grep::GrepTool);
 
+    #[cfg(feature = "git")]
+    r.register(git::GitTool);
+
     #[cfg(feature = "search")]
     r.register(search::SearchTool::new());
 
@@ -197,6 +202,7 @@ pub fn to_permission_tool<'a>(
         }
         "Glob" => Some(permission::Tool::Glob),
         "Grep" => Some(permission::Tool::Grep),
+        "Git" => Some(permission::Tool::Git),
         "Search" => Some(permission::Tool::Search),
         _ => None,
     }

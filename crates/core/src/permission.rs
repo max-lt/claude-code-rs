@@ -9,6 +9,7 @@ pub enum Tool<'a> {
     Read { path: &'a Path },
     Write { path: &'a Path },
     Edit { path: &'a Path },
+    Git,
     Glob,
     Grep,
     Search,
@@ -88,9 +89,9 @@ impl PermissionConfig {
             return Some(true);
         }
 
-        // Read-only tools (Glob, Grep) are always allowed
+        // Read-only tools are always allowed
         match tool {
-            Tool::Glob | Tool::Grep | Tool::Search => return Some(true),
+            Tool::Git | Tool::Glob | Tool::Grep | Tool::Search => return Some(true),
             _ => {}
         }
 
