@@ -42,6 +42,7 @@ impl PermissionHandler for InteractivePermissions {
             }
             Tool::Glob => "Search files by pattern".to_string(),
             Tool::Grep => "Search file contents".to_string(),
+            Tool::Search => "Full-text search across codebase".to_string(),
             _ => "Unknown tool action".to_string(),
         };
 
