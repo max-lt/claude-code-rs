@@ -2,39 +2,39 @@ use std::path::Path;
 
 use super::{ToolDef, ToolOutput};
 
-pub struct FileWriteTool;
+pub struct WriteTool;
 
-impl ToolDef for FileWriteTool {
+impl ToolDef for WriteTool {
     fn name(&self) -> &'static str {
-        "file_write"
+        "Write"
     }
 
     fn description(&self) -> &'static str {
-        "Write content to a file at the given path. Creates the file if it doesn't exist, \
-         or overwrites it if it does."
+        "Writes a file to the local filesystem. Overwrites the existing file if there is one. \
+         The file_path must be an absolute path."
     }
 
     fn input_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "path": {
+                "file_path": {
                     "type": "string",
-                    "description": "The file path to write to (absolute or relative to working directory)"
+                    "description": "The absolute path to the file to write"
                 },
                 "content": {
                     "type": "string",
                     "description": "The content to write to the file"
                 }
             },
-            "required": ["path", "content"]
+            "required": ["file_path", "content"]
         })
     }
 
     async fn execute(&self, input: &serde_json::Value, cwd: &Path) -> ToolOutput {
-        let path = match input.get("path").and_then(|p| p.as_str()) {
+        let file_path = match input.get("file_path").and_then(|p| p.as_str()) {
             Some(p) => p,
-            None => return ToolOutput::error("Missing required parameter: path"),
+            None => return ToolOutput::error("Missing required parameter: file_path"),
         };
 
         let content = match input.get("content").and_then(|c| c.as_str()) {
@@ -42,10 +42,10 @@ impl ToolDef for FileWriteTool {
             None => return ToolOutput::error("Missing required parameter: content"),
         };
 
-        let resolved = if Path::new(path).is_absolute() {
-            Path::new(path).to_path_buf()
+        let resolved = if Path::new(file_path).is_absolute() {
+            Path::new(file_path).to_path_buf()
         } else {
-            cwd.join(path)
+            cwd.join(file_path)
         };
 
         // Ensure parent directories exist

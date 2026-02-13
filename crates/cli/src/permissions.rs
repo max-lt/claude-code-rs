@@ -29,18 +29,23 @@ impl PermissionHandler for InteractivePermissions {
         // No matching rule — prompt interactively
         let description = match tool {
             Tool::Bash { command } => {
-                format!("Run bash command: {}", command.bold())
+                format!("Run command: {}", command.bold())
             }
-            Tool::FileRead { path } => {
+            Tool::Read { path } => {
                 format!("Read file: {}", path.display().to_string().bold())
             }
-            Tool::FileWrite { path } => {
+            Tool::Write { path } => {
                 format!("Write file: {}", path.display().to_string().bold())
             }
+            Tool::Edit { path } => {
+                format!("Edit file: {}", path.display().to_string().bold())
+            }
+            Tool::Glob => "Search files by pattern".to_string(),
+            Tool::Grep => "Search file contents".to_string(),
             _ => "Unknown tool action".to_string(),
         };
 
-        println!("\n{} {description}", "Tool:".yellow().bold());
+        println!("\n{} {description}", "Permission:".yellow().bold());
 
         Confirm::new()
             .with_prompt("Allow?")

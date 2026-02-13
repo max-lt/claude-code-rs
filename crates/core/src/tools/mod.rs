@@ -1,6 +1,9 @@
 pub mod bash;
-pub mod file_read;
-pub mod file_write;
+pub mod edit;
+pub mod glob;
+pub mod grep;
+pub mod read;
+pub mod write;
 
 use std::future::Future;
 use std::path::Path;
@@ -134,8 +137,11 @@ impl ToolRegistry {
 pub fn default_registry() -> ToolRegistry {
     let mut r = ToolRegistry::new();
     r.register(bash::BashTool);
-    r.register(file_read::FileReadTool);
-    r.register(file_write::FileWriteTool);
+    r.register(read::ReadTool);
+    r.register(write::WriteTool);
+    r.register(edit::EditTool);
+    r.register(glob::GlobTool);
+    r.register(grep::GrepTool);
     r
 }
 
@@ -149,22 +155,42 @@ pub fn to_permission_tool<'a>(
     input: &'a serde_json::Value,
 ) -> Option<permission::Tool<'a>> {
     match name {
-        "bash" => {
+        "Bash" => {
             let command = input.get("command").and_then(|c| c.as_str()).unwrap_or("");
             Some(permission::Tool::Bash { command })
         }
-        "file_read" => {
-            let path = input.get("path").and_then(|p| p.as_str()).unwrap_or("");
-            Some(permission::Tool::FileRead {
+        "Read" => {
+            let path = input
+                .get("file_path")
+                .and_then(|p| p.as_str())
+                .unwrap_or("");
+
+            Some(permission::Tool::Read {
                 path: Path::new(path),
             })
         }
-        "file_write" => {
-            let path = input.get("path").and_then(|p| p.as_str()).unwrap_or("");
-            Some(permission::Tool::FileWrite {
+        "Write" => {
+            let path = input
+                .get("file_path")
+                .and_then(|p| p.as_str())
+                .unwrap_or("");
+
+            Some(permission::Tool::Write {
                 path: Path::new(path),
             })
         }
+        "Edit" => {
+            let path = input
+                .get("file_path")
+                .and_then(|p| p.as_str())
+                .unwrap_or("");
+
+            Some(permission::Tool::Edit {
+                path: Path::new(path),
+            })
+        }
+        "Glob" => Some(permission::Tool::Glob),
+        "Grep" => Some(permission::Tool::Grep),
         _ => None,
     }
 }

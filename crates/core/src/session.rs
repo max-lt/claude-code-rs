@@ -41,8 +41,7 @@ impl SessionBuilder {
     pub fn permissions<P: PermissionHandler>(self, permissions: P) -> Result<Session<P>> {
         let cwd = match self.cwd {
             Some(cwd) => cwd,
-            None => std::env::current_dir()
-                .context("Failed to determine current directory")?,
+            None => std::env::current_dir().context("Failed to determine current directory")?,
         };
 
         let system_prompt = "You are Claude Code, Anthropic's official CLI for Claude.".to_string();
@@ -51,12 +50,16 @@ impl SessionBuilder {
             "Working directory: {cwd}\n\
              \n\
              You have access to these tools:\n\
-             - **bash**: Execute shell commands. Use for running programs, git, builds, etc.\n\
-             - **file_read**: Read a file's contents. Always prefer this over `cat` or `head`.\n\
-             - **file_write**: Write content to a file. Always prefer this over shell redirects.\n\
+             - **Bash**: Execute shell commands. Use for running programs, git, builds, etc.\n\
+             - **Read**: Read a file's contents. Always prefer this over `cat` or `head`.\n\
+             - **Write**: Write content to a file. Always prefer this over shell redirects.\n\
+             - **Edit**: Perform exact string replacements in files.\n\
+             - **Glob**: Find files by glob pattern (e.g. \"**/*.rs\").\n\
+             - **Grep**: Search file contents with regex.\n\
              \n\
              Important:\n\
-             - Use file_read/file_write instead of bash for file operations.\n\
+             - Use Read/Write/Edit instead of Bash for file operations.\n\
+             - Use Glob/Grep instead of find/grep commands.\n\
              - Keep responses concise.\n\
              - When executing commands, use the working directory as the base for relative paths.",
             cwd = cwd.display()
