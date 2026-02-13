@@ -96,8 +96,11 @@ impl ToolDef for FetchTool {
 
         let mut request = self.client.request(method.clone(), url);
 
-        // Set a reasonable User-Agent
-        request = request.header(USER_AGENT, "ccrs/0.1");
+        // Default User-Agent mimics Firefox to avoid bot-blocking
+        request = request.header(
+            USER_AGENT,
+            "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0",
+        );
 
         // Custom headers
         if let Some(headers_obj) = input.get("headers").and_then(|v| v.as_object()) {
