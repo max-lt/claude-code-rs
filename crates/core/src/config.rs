@@ -117,17 +117,24 @@ impl Mergeable for Settings {
 pub fn load_settings(project_dir: &Path) -> Settings {
     let claude_dir = project_dir.join(".claude");
 
-    let layers: Vec<Option<Settings>> = vec![
-        dirs::home_dir()
-            .map(|h| h.join(".claude").join("settings.json"))
-            .and_then(|p| load_settings_file(&p)),
-        load_settings_file(&claude_dir.join("settings.json")),
-        load_settings_file(&claude_dir.join("settings.local.json")),
-    ];
+    let paths: Vec<PathBuf> = vec![
+        dirs::home_dir().map(|h| h.join(".claude").join("settings.json")),
+        Some(claude_dir.join("settings.json")),
+        Some(claude_dir.join("settings.local.json")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
 
-    layers
-        .into_iter()
-        .flatten()
+    load_settings_from_paths(&paths)
+}
+
+/// Load and merge settings from an explicit list of file paths (in order).
+/// Missing or malformed files are silently skipped.
+pub fn load_settings_from_paths(paths: &[PathBuf]) -> Settings {
+    paths
+        .iter()
+        .filter_map(|p| load_settings_file(p))
         .reduce(Mergeable::merge)
         .unwrap_or_default()
 }
@@ -442,11 +449,20 @@ mod tests {
     // load_settings — filesystem integration tests
     // -----------------------------------------------------------------------
 
+    /// Helper: build paths for project + local settings inside a temp dir.
+    fn project_paths(claude_dir: &Path) -> Vec<PathBuf> {
+        vec![
+            claude_dir.join("settings.json"),
+            claude_dir.join("settings.local.json"),
+        ]
+    }
+
     #[test]
     fn load_settings_no_files() {
         let tmp = tempfile::tempdir().unwrap();
+        let paths = project_paths(&tmp.path().join(".claude"));
 
-        let s = load_settings(tmp.path());
+        let s = load_settings_from_paths(&paths);
 
         assert!(s.permissions.allow.is_empty());
         assert!(s.permissions.deny.is_empty());
@@ -465,7 +481,7 @@ mod tests {
         )
         .unwrap();
 
-        let s = load_settings(tmp.path());
+        let s = load_settings_from_paths(&project_paths(&claude_dir));
 
         assert_eq!(s.permissions.allow, vec!["Bash(cargo:*)"]);
         assert!(s.permissions.deny.is_empty());
@@ -483,7 +499,7 @@ mod tests {
         )
         .unwrap();
 
-        let s = load_settings(tmp.path());
+        let s = load_settings_from_paths(&project_paths(&claude_dir));
 
         assert_eq!(s.permissions.allow, vec!["Bash(psql:*)"]);
         assert_eq!(
@@ -509,7 +525,7 @@ mod tests {
         )
         .unwrap();
 
-        let s = load_settings(tmp.path());
+        let s = load_settings_from_paths(&project_paths(&claude_dir));
 
         assert_eq!(s.permissions.allow, vec!["Bash(cargo:*)", "Bash(psql:*)"]);
         assert_eq!(s.permissions.deny, vec!["Bash(rm:*)"]);
@@ -528,7 +544,7 @@ mod tests {
         )
         .unwrap();
 
-        let s = load_settings(tmp.path());
+        let s = load_settings_from_paths(&project_paths(&claude_dir));
 
         // Broken file skipped, valid file still loaded.
         assert_eq!(s.permissions.allow, vec!["Bash(psql:*)"]);
@@ -542,7 +558,7 @@ mod tests {
 
         fs::write(claude_dir.join("settings.json"), "{}").unwrap();
 
-        let s = load_settings(tmp.path());
+        let s = load_settings_from_paths(&project_paths(&claude_dir));
 
         assert!(s.permissions.allow.is_empty());
         assert!(s.permissions.deny.is_empty());
@@ -562,7 +578,7 @@ mod tests {
         )
         .unwrap();
 
-        let s = load_settings(tmp.path());
+        let s = load_settings_from_paths(&project_paths(&claude_dir));
 
         assert_eq!(s.permissions.allow, vec!["Bash(ls:*)"]);
         assert!(s.permissions.deny.is_empty());
@@ -577,7 +593,7 @@ mod tests {
 
         fs::write(claude_dir.join("settings.json"), "").unwrap();
 
-        let s = load_settings(tmp.path());
+        let s = load_settings_from_paths(&project_paths(&claude_dir));
 
         assert!(s.permissions.allow.is_empty());
     }
@@ -591,7 +607,7 @@ mod tests {
         fs::write(claude_dir.join("settings.json"), "{{{bad").unwrap();
         fs::write(claude_dir.join("settings.local.json"), "also broken").unwrap();
 
-        let s = load_settings(tmp.path());
+        let s = load_settings_from_paths(&project_paths(&claude_dir));
 
         assert!(s.permissions.allow.is_empty());
         assert!(s.permissions.deny.is_empty());
