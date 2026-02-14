@@ -48,7 +48,7 @@ impl SessionBuilder {
         let system_prompt = "You are Claude Code, Anthropic's official CLI for Claude.".to_string();
 
         let git_tool_line = if cfg!(feature = "git") {
-            "\n             - **Git**: Git operations (status, diff, log, branch) via libgit2. Prefer this over `git` CLI."
+            "\n             - **Git**: Git operations (status, diff, log, branch, add, commit, push, reset, checkout) via libgit2. Prefer this over `git` CLI."
         } else {
             ""
         };

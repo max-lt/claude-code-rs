@@ -10,7 +10,7 @@ impl ToolDef for GitTool {
     }
 
     fn description(&self) -> &'static str {
-        "Git operations via libgit2: status, diff, log, show, blame, branch. \
+        "Git operations via libgit2: status, diff, log, show, blame, branch, add, commit, push, reset, checkout. \
          Does not shell out to git — works directly with the repository."
     }
 
@@ -20,7 +20,10 @@ impl ToolDef for GitTool {
             "properties": {
                 "subcommand": {
                     "type": "string",
-                    "enum": ["status", "diff_staged", "diff_unstaged", "diff", "log", "show", "blame", "branch"],
+                    "enum": [
+                        "status", "diff_staged", "diff_unstaged", "diff", "log", "show", "blame", "branch",
+                        "add", "commit", "push", "reset", "checkout", "create_branch", "delete_branch", "unstage"
+                    ],
                     "description": "The git operation to perform"
                 },
                 "from": {
@@ -54,6 +57,44 @@ impl ToolDef for GitTool {
                 "include_remote": {
                     "type": "boolean",
                     "description": "Include remote branches in branch listing (default: false)"
+                },
+                "pathspec": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "File patterns for add/unstage (e.g. ['.', 'src/*.rs'])"
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Commit message"
+                },
+                "remote": {
+                    "type": "string",
+                    "description": "Remote name for push (default: 'origin')"
+                },
+                "refspec": {
+                    "type": "string",
+                    "description": "Refspec for push (e.g. 'refs/heads/main:refs/heads/main')"
+                },
+                "target": {
+                    "type": "string",
+                    "description": "Target commit/branch for reset or checkout"
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["soft", "mixed", "hard"],
+                    "description": "Reset mode (default: mixed)"
+                },
+                "branch_name": {
+                    "type": "string",
+                    "description": "Branch name for create/checkout/delete"
+                },
+                "start_point": {
+                    "type": "string",
+                    "description": "Starting point for new branch (default: HEAD)"
+                },
+                "force": {
+                    "type": "boolean",
+                    "description": "Force operation (for push, delete_branch, etc.)"
                 }
             },
             "required": ["subcommand"]
@@ -67,6 +108,7 @@ impl ToolDef for GitTool {
         };
 
         match subcommand {
+            // Read-only operations
             "status" => exec_status(cwd),
             "diff_staged" => exec_diff_staged(cwd),
             "diff_unstaged" => exec_diff_unstaged(cwd),
@@ -108,8 +150,96 @@ impl ToolDef for GitTool {
                     .unwrap_or(false);
                 exec_branch(cwd, include_remote)
             }
+
+            // Write operations
+            "add" => {
+                let pathspec = match input.get("pathspec").and_then(|v| v.as_array()) {
+                    Some(arr) => arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>(),
+                    None => return ToolOutput::error("add requires 'pathspec' array"),
+                };
+                exec_add(cwd, &pathspec)
+            }
+            "unstage" => {
+                let pathspec = match input.get("pathspec").and_then(|v| v.as_array()) {
+                    Some(arr) => arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>(),
+                    None => return ToolOutput::error("unstage requires 'pathspec' array"),
+                };
+                exec_unstage(cwd, &pathspec)
+            }
+            "commit" => {
+                let message = match input.get("message").and_then(|v| v.as_str()) {
+                    Some(m) => m,
+                    None => return ToolOutput::error("commit requires 'message' parameter"),
+                };
+                exec_commit(cwd, message)
+            }
+            "push" => {
+                let remote = input
+                    .get("remote")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("origin");
+                let refspec = match input.get("refspec").and_then(|v| v.as_str()) {
+                    Some(r) => r,
+                    None => return ToolOutput::error("push requires 'refspec' parameter"),
+                };
+                let force = input
+                    .get("force")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                exec_push(cwd, remote, refspec, force)
+            }
+            "reset" => {
+                let target = match input.get("target").and_then(|v| v.as_str()) {
+                    Some(t) => t,
+                    None => return ToolOutput::error("reset requires 'target' parameter"),
+                };
+                let mode_str = input
+                    .get("mode")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("mixed");
+                let mode: ccrs_git::ResetMode = match mode_str.parse() {
+                    Ok(m) => m,
+                    Err(_) => {
+                        return ToolOutput::error(
+                            "Invalid reset mode (expected: soft, mixed, hard)",
+                        );
+                    }
+                };
+                exec_reset(cwd, target, mode)
+            }
+            "checkout" => {
+                let branch_name = match input.get("branch_name").and_then(|v| v.as_str()) {
+                    Some(b) => b,
+                    None => return ToolOutput::error("checkout requires 'branch_name' parameter"),
+                };
+                exec_checkout(cwd, branch_name)
+            }
+            "create_branch" => {
+                let branch_name = match input.get("branch_name").and_then(|v| v.as_str()) {
+                    Some(b) => b,
+                    None => {
+                        return ToolOutput::error("create_branch requires 'branch_name' parameter");
+                    }
+                };
+                let start_point = input.get("start_point").and_then(|v| v.as_str());
+                exec_create_branch(cwd, branch_name, start_point)
+            }
+            "delete_branch" => {
+                let branch_name = match input.get("branch_name").and_then(|v| v.as_str()) {
+                    Some(b) => b,
+                    None => {
+                        return ToolOutput::error("delete_branch requires 'branch_name' parameter");
+                    }
+                };
+                let force = input
+                    .get("force")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                exec_delete_branch(cwd, branch_name, force)
+            }
+
             other => ToolOutput::error(format!(
-                "Unknown subcommand: {other}. Expected: status, diff_staged, diff_unstaged, diff, log, show, blame, branch"
+                "Unknown subcommand: {other}. Expected: status, diff_staged, diff_unstaged, diff, log, show, blame, branch, add, commit, push, reset, checkout, create_branch, delete_branch, unstage"
             )),
         }
     }
@@ -268,5 +398,74 @@ fn exec_branch(cwd: &Path, include_remote: bool) -> ToolOutput {
             ToolOutput::success(out.trim_end())
         }
         Err(e) => ToolOutput::error(format!("git branch failed: {e}")),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Write operations
+// ---------------------------------------------------------------------------
+
+fn exec_add(cwd: &Path, pathspec: &[&str]) -> ToolOutput {
+    match ccrs_git::add(cwd, pathspec) {
+        Ok(_) => {
+            let files = pathspec.join(", ");
+            ToolOutput::success(format!("Staged: {files}"))
+        }
+        Err(e) => ToolOutput::error(format!("git add failed: {e}")),
+    }
+}
+
+fn exec_unstage(cwd: &Path, pathspec: &[&str]) -> ToolOutput {
+    match ccrs_git::unstage(cwd, pathspec) {
+        Ok(_) => {
+            let files = pathspec.join(", ");
+            ToolOutput::success(format!("Unstaged: {files}"))
+        }
+        Err(e) => ToolOutput::error(format!("git unstage failed: {e}")),
+    }
+}
+
+fn exec_commit(cwd: &Path, message: &str) -> ToolOutput {
+    match ccrs_git::commit(cwd, message) {
+        Ok(oid) => ToolOutput::success(format!("Created commit {}", &oid[..8])),
+        Err(e) => ToolOutput::error(format!("git commit failed: {e}")),
+    }
+}
+
+fn exec_push(cwd: &Path, remote: &str, refspec: &str, force: bool) -> ToolOutput {
+    match ccrs_git::push(cwd, remote, refspec, force) {
+        Ok(msg) => ToolOutput::success(msg),
+        Err(e) => ToolOutput::error(format!("git push failed: {e}")),
+    }
+}
+
+fn exec_reset(cwd: &Path, target: &str, mode: ccrs_git::ResetMode) -> ToolOutput {
+    match ccrs_git::reset(cwd, target, mode) {
+        Ok(_) => ToolOutput::success(format!("Reset to {target}")),
+        Err(e) => ToolOutput::error(format!("git reset failed: {e}")),
+    }
+}
+
+fn exec_checkout(cwd: &Path, branch_name: &str) -> ToolOutput {
+    match ccrs_git::checkout(cwd, branch_name) {
+        Ok(_) => ToolOutput::success(format!("Switched to branch '{branch_name}'")),
+        Err(e) => ToolOutput::error(format!("git checkout failed: {e}")),
+    }
+}
+
+fn exec_create_branch(cwd: &Path, branch_name: &str, start_point: Option<&str>) -> ToolOutput {
+    match ccrs_git::create_branch(cwd, branch_name, start_point) {
+        Ok(_) => {
+            let from = start_point.unwrap_or("HEAD");
+            ToolOutput::success(format!("Created branch '{branch_name}' from {from}"))
+        }
+        Err(e) => ToolOutput::error(format!("git branch failed: {e}")),
+    }
+}
+
+fn exec_delete_branch(cwd: &Path, branch_name: &str, force: bool) -> ToolOutput {
+    match ccrs_git::delete_branch(cwd, branch_name, force) {
+        Ok(_) => ToolOutput::success(format!("Deleted branch '{branch_name}'")),
+        Err(e) => ToolOutput::error(format!("git branch -d failed: {e}")),
     }
 }

@@ -10,7 +10,7 @@ pub enum Tool<'a> {
     Write { path: &'a Path },
     Edit { path: &'a Path },
     Fetch { url: &'a str, method: &'a str },
-    Git,
+    Git { subcommand: &'a str },
     Glob,
     Grep,
     List,
@@ -93,7 +93,13 @@ impl PermissionConfig {
 
         // Read-only tools are always allowed
         match tool {
-            Tool::Git | Tool::Glob | Tool::Grep | Tool::List | Tool::Search => return Some(true),
+            Tool::Glob | Tool::Grep | Tool::List | Tool::Search => return Some(true),
+            Tool::Git { subcommand } => {
+                // Read-only git commands are auto-allowed
+                if is_readonly_git_command(subcommand) {
+                    return Some(true);
+                }
+            }
             _ => {}
         }
 
@@ -136,6 +142,7 @@ fn rule_matches(rule: &str, tool: &Tool<'_>) -> bool {
         ("Read", Tool::Read { path }) => pattern_matches(&path.display().to_string(), pattern),
         ("Write", Tool::Write { path }) => pattern_matches(&path.display().to_string(), pattern),
         ("Edit", Tool::Edit { path }) => pattern_matches(&path.display().to_string(), pattern),
+        ("Git", Tool::Git { subcommand }) => pattern_matches(subcommand, pattern),
         _ => false,
     }
 }
@@ -173,6 +180,14 @@ fn pattern_matches(value: &str, pattern: &str) -> bool {
     }
 
     value == pattern
+}
+
+/// Check if a Git subcommand is read-only.
+fn is_readonly_git_command(subcommand: &str) -> bool {
+    matches!(
+        subcommand,
+        "status" | "diff_staged" | "diff_unstaged" | "diff" | "log" | "show" | "blame" | "branch"
+    )
 }
 
 /// Resolve a potentially relative path against the project directory.
@@ -343,6 +358,71 @@ mod tests {
 
         assert_eq!(config.check(&Tool::Glob, project), Some(true));
         assert_eq!(config.check(&Tool::Grep, project), Some(true));
+    }
+
+    #[test]
+    fn test_git_readonly_allowed() {
+        let config = PermissionConfig::default();
+        let project = Path::new("/project");
+
+        assert_eq!(
+            config.check(
+                &Tool::Git {
+                    subcommand: "status"
+                },
+                project
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            config.check(&Tool::Git { subcommand: "log" }, project),
+            Some(true)
+        );
+        assert_eq!(
+            config.check(
+                &Tool::Git {
+                    subcommand: "commit"
+                },
+                project
+            ),
+            None
+        );
+        assert_eq!(
+            config.check(&Tool::Git { subcommand: "push" }, project),
+            None
+        );
+    }
+
+    #[test]
+    fn test_git_write_allowed_with_rule() {
+        let config = PermissionConfig {
+            allow: vec!["Git(commit:*)".to_string(), "Git(push:*)".to_string()],
+            ..Default::default()
+        };
+        let project = Path::new("/project");
+
+        assert_eq!(
+            config.check(
+                &Tool::Git {
+                    subcommand: "commit"
+                },
+                project
+            ),
+            Some(true)
+        );
+        assert_eq!(
+            config.check(&Tool::Git { subcommand: "push" }, project),
+            Some(true)
+        );
+        assert_eq!(
+            config.check(
+                &Tool::Git {
+                    subcommand: "reset"
+                },
+                project
+            ),
+            None
+        );
     }
 
     #[test]

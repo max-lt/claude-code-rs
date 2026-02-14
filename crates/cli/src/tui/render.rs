@@ -13,16 +13,34 @@ use super::{App, AppState, DisplayMessage};
 pub fn render(app: &mut App, frame: &mut Frame) {
     let area = frame.area();
 
-    let chunks = Layout::vertical([
-        Constraint::Length(1), // status bar
-        Constraint::Min(1),    // messages
-        Constraint::Length(3), // input area
-    ])
-    .split(area);
+    let has_perm = app.pending_perm.is_some();
+
+    let chunks = if has_perm {
+        Layout::vertical([
+            Constraint::Length(1), // status bar
+            Constraint::Min(1),    // messages
+            Constraint::Length(2), // permission prompt
+            Constraint::Length(3), // input area
+        ])
+        .split(area)
+    } else {
+        Layout::vertical([
+            Constraint::Length(1), // status bar
+            Constraint::Min(1),    // messages
+            Constraint::Length(0), // no permission prompt
+            Constraint::Length(3), // input area
+        ])
+        .split(area)
+    };
 
     render_status_bar(app, frame, chunks[0]);
     render_messages(app, frame, chunks[1]);
-    render_input(app, frame, chunks[2]);
+
+    if has_perm {
+        render_permission(app, frame, chunks[2]);
+    }
+
+    render_input(app, frame, chunks[2 + 1]);
 }
 
 fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
@@ -92,18 +110,19 @@ fn render_messages(app: &mut App, frame: &mut Frame, area: Rect) {
         }
     }
 
-    // Permission prompt inline
-    if let Some(perm) = &app.pending_perm {
-        lines.push(Line::from(vec![
-            Span::styled("? ", Style::new().fg(Color::Yellow).bold()),
-            Span::raw(&perm.description),
-            Span::styled(" [Y/n] ", Style::new().fg(Color::DarkGray)),
-        ]));
+    let content_height = wrapped_line_count(&lines, area.width);
+
+    // Pad with empty lines so content is bottom-aligned
+    if content_height < area.height {
+        let padding = area.height - content_height;
+        let mut padded = vec![Line::default(); padding as usize];
+        padded.append(&mut lines);
+        lines = padded;
     }
 
-    let content_height = wrapped_line_count(&lines, area.width);
-    let max_scroll = content_height.saturating_sub(area.height);
-    
+    let total_height = wrapped_line_count(&lines, area.width);
+    let max_scroll = total_height.saturating_sub(area.height);
+
     // Store max_scroll for scroll event handling
     app.max_scroll = max_scroll;
 
@@ -118,6 +137,27 @@ fn render_messages(app: &mut App, frame: &mut Frame, area: Rect) {
         .wrap(Wrap { trim: false });
 
     frame.render_widget(paragraph, area);
+}
+
+fn render_permission(app: &App, frame: &mut Frame, area: Rect) {
+    if let Some(perm) = &app.pending_perm {
+        let line = Line::from(vec![
+            Span::styled(
+                " ? ",
+                Style::new().fg(Color::Black).bg(Color::Yellow).bold(),
+            ),
+            Span::raw(" "),
+            Span::raw(&perm.description),
+            Span::styled("  [Y/n]", Style::new().fg(Color::DarkGray)),
+        ]);
+
+        let block = Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::new().fg(Color::Yellow));
+
+        let widget = Paragraph::new(line).block(block);
+        frame.render_widget(widget, area);
+    }
 }
 
 fn render_tool_block<'a>(
