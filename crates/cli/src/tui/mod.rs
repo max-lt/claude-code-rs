@@ -4,7 +4,7 @@ mod render;
 
 use std::path::PathBuf;
 use std::sync::mpsc as std_mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::event::{Event, KeyCode, KeyModifiers};
@@ -63,6 +63,8 @@ pub struct App {
     pub cursor: usize,
     pub state: AppState,
     pub pending_perm: Option<PendingPermission>,
+    pub spinner_frame: usize,
+    pub last_spinner_update: Instant,
     ui_rx: mpsc::UnboundedReceiver<UiEvent>,
     session_tx: mpsc::UnboundedSender<SessionCmd>,
     ctrl_c_count: u8,
@@ -91,6 +93,8 @@ impl App {
             cursor: 0,
             state: AppState::Idle,
             pending_perm: None,
+            spinner_frame: 0,
+            last_spinner_update: Instant::now(),
             ui_rx,
             session_tx,
             ctrl_c_count: 0,
@@ -285,10 +289,10 @@ impl App {
                 self.messages.push(DisplayMessage::Error(msg));
             }
 
-            UiEvent::ToolStart { name } => {
+            UiEvent::ToolStart { name, input } => {
                 self.messages.push(DisplayMessage::ToolUse {
                     name,
-                    input: None,
+                    input: Some(input),
                     output: None,
                     is_error: false,
                 });
@@ -435,6 +439,12 @@ pub fn run(
     terminal.clear()?;
 
     loop {
+        // Update spinner frame if busy (~10 fps for spinner animation)
+        if app.state == AppState::Busy && app.last_spinner_update.elapsed() >= Duration::from_millis(100) {
+            app.spinner_frame = (app.spinner_frame + 1) % 10;
+            app.last_spinner_update = Instant::now();
+        }
+
         terminal.draw(|f| render::render(&app, f))?;
 
         // Poll crossterm events (~30 fps)

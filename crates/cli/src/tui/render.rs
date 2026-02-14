@@ -26,10 +26,13 @@ pub fn render(app: &App, frame: &mut Frame) {
 }
 
 fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
+    // Spinner frames (unicode braille patterns for smooth animation)
+    const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    
     let busy = if app.state == AppState::Busy {
-        " ●"
+        format!(" {}", SPINNER_FRAMES[app.spinner_frame % SPINNER_FRAMES.len()])
     } else {
-        ""
+        String::new()
     };
 
     let tokens = format!(
@@ -137,7 +140,7 @@ fn render_tool_block<'a>(
     // Format header + input based on tool type
     let (header, display) = match input {
         Some(inp) => format_tool_display(name, inp, cwd),
-        None => (name.to_string(), Some("...".to_string())),
+        None => (name.to_string(), None),
     };
 
     // Header
