@@ -215,7 +215,13 @@ pub fn to_permission_tool<'a>(
         "Glob" => Some(permission::Tool::Glob),
         "Grep" => Some(permission::Tool::Grep),
         "List" => Some(permission::Tool::List),
-        "Git" => Some(permission::Tool::Git),
+        "Git" => {
+            let subcommand = input
+                .get("subcommand")
+                .and_then(|s| s.as_str())
+                .unwrap_or("");
+            Some(permission::Tool::Git { subcommand })
+        }
         "Search" => Some(permission::Tool::Search),
         _ => None,
     }

@@ -45,7 +45,7 @@ impl PermissionHandler for ChannelPermissions {
             Tool::Write { path } => format!("Write file: {}", path.display()),
             Tool::Edit { path } => format!("Edit file: {}", path.display()),
             Tool::Fetch { url, method } => format!("HTTP {method} {url}"),
-            Tool::Git => "Git repository operation".to_string(),
+            Tool::Git { subcommand } => format!("Git {subcommand}"),
             Tool::Glob => "Search files by pattern".to_string(),
             Tool::Grep => "Search file contents".to_string(),
             Tool::List => "List directory contents".to_string(),
