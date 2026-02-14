@@ -1,3 +1,12 @@
 [workspace]
 members = ["crates/utils", "crates/core", "crates/cli", "crates/search", "crates/git"]
 resolver = "3"
+
+# https://doc.rust-lang.org/cargo/reference/profiles.html
+# https://github.com/johnthagen/min-sized-rust?tab=readme-ov-file#minimizing-rust-binary-size
+[profile.release]
+strip = true  # Automatically strip symbols from the binary.
+opt-level = "z"  # Optimize for size.
+incremental = true # Enable incremental compilation.
+codegen-units = 1 # Use a single codegen unit to optimize for size.
+lto = true # Enable link-time optimization.

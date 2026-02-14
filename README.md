@@ -6,7 +6,7 @@ A lightweight reimplementation of [Claude Code](https://github.com/anthropics/cl
 
 `ccrs` is designed for performance and efficiency. While the official Claude Code CLI is a powerful tool, it requires approximately 175 MB of disk space and 500 MB – 3 GB+ of RAM during operation due to its Node.js/Bun architecture.
 
-`ccrs` provides the same functionality in a **4 MB** static binary using **~10 MB RAM**, making it ideal for resource-constrained environments or users who prefer minimal overhead.
+`ccrs` provides the same functionality in a **~23 MB** binary using **~10 MB RAM**, making it ideal for resource-constrained environments or users who prefer minimal overhead.
 
 ## Features
 
