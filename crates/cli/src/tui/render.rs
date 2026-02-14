@@ -137,7 +137,7 @@ fn render_tool_block<'a>(
     // Format header + input based on tool type
     let (header, display) = match input {
         Some(inp) => format_tool_display(name, inp, cwd),
-        None => (name.to_string(), None),
+        None => (name.to_string(), Some("...".to_string())),
     };
 
     // Header
@@ -150,9 +150,17 @@ fn render_tool_block<'a>(
     // Input display
     if let Some(display) = &display {
         for line in display.lines() {
+            let style = if line.starts_with("- ") {
+                Style::new().fg(Color::Red)
+            } else if line.starts_with("+ ") {
+                Style::new().fg(Color::Green)
+            } else {
+                Style::new().fg(Color::White)
+            };
+
             lines.push(Line::from(vec![
                 Span::styled("│ ", border),
-                Span::styled(line.to_string(), Style::new().fg(Color::White)),
+                Span::styled(line.to_string(), style),
             ]));
         }
     }
@@ -165,14 +173,18 @@ fn render_tool_block<'a>(
             Style::new().fg(Color::DarkGray)
         };
 
+        let cwd_prefix = format!("{}/", cwd.display());
+
         const MAX_LINES: usize = 10;
         let output_lines: Vec<&str> = output.lines().collect();
         let total = output_lines.len();
 
         for line in output_lines.iter().take(MAX_LINES) {
+            let display_line = line.strip_prefix(&cwd_prefix).unwrap_or(line);
+
             lines.push(Line::from(vec![
                 Span::styled("│ ", border),
-                Span::styled((*line).to_string(), style),
+                Span::styled(display_line.to_string(), style),
             ]));
         }
 
@@ -204,7 +216,7 @@ fn format_tool_display(
     match name {
         "Bash" => {
             let cmd = str_field(input, "command");
-            (name.to_string(), Some(cmd.to_string()))
+            (format!("Bash({cmd})"), None)
         }
 
         "Read" => {
