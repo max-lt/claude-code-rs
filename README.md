@@ -4,9 +4,9 @@ A lightweight reimplementation of [Claude Code](https://github.com/anthropics/cl
 
 ## Why?
 
-The official Claude Code CLI weighs **175 MB** on disk and routinely consumes **500 MB – 3 GB+ RAM** per session, with [memory leaks reaching 12–93 GB](https://github.com/anthropics/claude-code/issues/22188) and [50–80% idle CPU](https://github.com/anthropics/claude-code/issues/22275). This is a Node.js/Bun architecture problem, not a bug.
+`ccrs` is designed for performance and efficiency. While the official Claude Code CLI is a powerful tool, it requires approximately 175 MB of disk space and 500 MB – 3 GB+ of RAM during operation due to its Node.js/Bun architecture.
 
-`ccrs` does the same job in a **4 MB** static binary using **~10 MB RAM**.
+`ccrs` provides the same functionality in a **4 MB** static binary using **~10 MB RAM**, making it ideal for resource-constrained environments or users who prefer minimal overhead.
 
 ## Features
 
@@ -56,8 +56,8 @@ Create `.claude/settings.local.json` in your project:
     "allow": [
       "Bash(cargo:*)", 
       "Bash(git:*)",
-      "Git(push:*)",
-      "Git(commit:*)"
+      "Git(commit:*)",
+      "Git(push:*)"
     ],
     "deny": ["Bash(rm -rf:*)"],
     "additionalDirectories": ["/path/to/other/project"]
@@ -66,13 +66,13 @@ Create `.claude/settings.local.json` in your project:
 ```
 
 **Auto-approved tools:**
-- `Glob`, `Grep`, `Search` — always allowed
+- `Glob`, `Grep`, `Search`, `List` — always allowed
 - `Read`, `Write`, `Edit` — auto-allowed in project directory
-- `Git status`, `Git log`, `Git diff`, etc. — read-only git commands
+- `Git status`, `Git log`, `Git diff`, `Git show`, `Git blame`, `Git branch` — read-only git commands
 
 **Require permission:**
 - `Bash` commands (unless explicitly allowed)
-- `Git commit`, `Git push`, `Git reset`, etc. — write operations
+- `Git commit`, `Git push`, `Git reset`, `Git checkout`, `Git add`, etc. — write operations
 
 Three layers, merged in order:
 
