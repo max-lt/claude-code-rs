@@ -7,10 +7,11 @@ use std::sync::mpsc as std_mpsc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
-use crossterm::event::{Event, KeyCode, KeyModifiers};
+use crossterm::event::{Event, KeyCode, KeyModifiers, MouseEventKind};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
 
 use claude_code_core::api::Usage;
 use claude_code_core::session::Session;
@@ -67,7 +68,6 @@ pub struct App {
     pub last_spinner_update: Instant,
     ui_rx: mpsc::UnboundedReceiver<UiEvent>,
     session_tx: mpsc::UnboundedSender<SessionCmd>,
-    ctrl_c_count: u8,
 }
 
 impl App {
@@ -97,7 +97,6 @@ impl App {
             last_spinner_update: Instant::now(),
             ui_rx,
             session_tx,
-            ctrl_c_count: 0,
         }
     }
 
@@ -105,28 +104,20 @@ impl App {
 
     /// Returns `true` if the app should quit.
     fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
-        // Esc or Ctrl+C: stop Claude if busy, else quit
-        let is_stop_key = key.code == KeyCode::Esc
-            || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL));
-
-        if is_stop_key {
+        // Ctrl+C: stop Claude if busy, quit if idle
+        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             if self.state == AppState::Busy {
-                // First interrupt: stop Claude
-                self.ctrl_c_count += 1;
-                if self.ctrl_c_count == 1 {
-                    let _ = self.session_tx.send(SessionCmd::Stop);
-                    self.messages.push(DisplayMessage::Info(
-                        "⚠ Stopping... (Ctrl+C again to exit)".to_string(),
-                    ));
-                    return false;
-                } else {
-                    // Second Ctrl+C while still busy: force quit
-                    return true;
-                }
+                let _ = self.session_tx.send(SessionCmd::Stop);
+                return false;
             } else {
-                // Not busy: quit immediately
                 return true;
             }
+        }
+
+        // Esc: stop Claude if busy, do nothing if idle
+        if key.code == KeyCode::Esc && self.state == AppState::Busy {
+            let _ = self.session_tx.send(SessionCmd::Stop);
+            return false;
         }
 
         // Permission prompt captures y/n
@@ -134,14 +125,9 @@ impl App {
             return self.handle_perm_key(key.code);
         }
 
-        // Ignore input while busy
-        if self.state == AppState::Busy {
-            return false;
-        }
-
         match key.code {
             KeyCode::Enter => {
-                if !self.input.is_empty() {
+                if !self.input.is_empty() && self.state != AppState::Busy {
                     return self.submit_input();
                 }
             }
@@ -322,13 +308,11 @@ impl App {
                 self.usage.input_tokens += usage.input_tokens;
                 self.usage.output_tokens += usage.output_tokens;
                 self.state = AppState::Idle;
-                self.ctrl_c_count = 0; // Reset stop counter
             }
 
             UiEvent::Failed(msg) => {
                 self.messages.push(DisplayMessage::Error(msg));
                 self.state = AppState::Idle;
-                self.ctrl_c_count = 0; // Reset stop counter
             }
 
             UiEvent::PermissionRequest {
@@ -358,27 +342,37 @@ async fn session_loop(
     while let Some(cmd) = cmd_rx.recv().await {
         match cmd {
             SessionCmd::SendMessage(text) => {
-                let message_future = session.send_message(&text, &mut handler);
+                let cancel = CancellationToken::new();
+                let token = cancel.clone();
+
+                let message_future = session.send_message(&text, &mut handler, &token);
                 tokio::pin!(message_future);
 
-                let result = tokio::select! {
-                    res = &mut message_future => Some(res),
-                    Some(SessionCmd::Stop) = cmd_rx.recv() => {
-                        // Stop received, cancel the message
-                        None
+                // Race message completion against stop commands
+                let result = loop {
+                    tokio::select! {
+                        res = &mut message_future => break res,
+                        Some(cmd) = cmd_rx.recv() => {
+                            if matches!(cmd, SessionCmd::Stop) {
+                                cancel.cancel();
+                            }
+                            // Other commands ignored while busy
+                        }
                     }
                 };
 
                 match result {
-                    Some(Ok(usage)) => {
+                    Ok(usage) => {
                         let _ = ui_tx.send(UiEvent::Done(usage));
                     }
-                    Some(Err(e)) => {
-                        let _ = ui_tx.send(UiEvent::Failed(e.to_string()));
-                    }
-                    None => {
-                        // Stopped by user
-                        let _ = ui_tx.send(UiEvent::Failed("Stopped by user.".to_string()));
+                    Err(e) => {
+                        let msg = e.to_string();
+
+                        if msg == "Cancelled" {
+                            let _ = ui_tx.send(UiEvent::Failed("Stopped.".to_string()));
+                        } else {
+                            let _ = ui_tx.send(UiEvent::Failed(msg));
+                        }
                     }
                 }
             }
@@ -418,7 +412,11 @@ pub fn run(
 
     // Terminal setup
     crossterm::terminal::enable_raw_mode()?;
-    crossterm::execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
+    crossterm::execute!(
+        std::io::stdout(),
+        crossterm::terminal::EnterAlternateScreen,
+        crossterm::event::EnableMouseCapture,
+    )?;
 
     let backend = CrosstermBackend::new(std::io::stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -428,7 +426,11 @@ pub fn run(
 
     std::panic::set_hook(Box::new(move |info| {
         let mut stdout = std::io::stdout();
-        let _ = crossterm::execute!(stdout, crossterm::terminal::LeaveAlternateScreen);
+        let _ = crossterm::execute!(
+            stdout,
+            crossterm::event::DisableMouseCapture,
+            crossterm::terminal::LeaveAlternateScreen,
+        );
         let _ = crossterm::terminal::disable_raw_mode();
         original_hook(info);
     }));
@@ -440,7 +442,9 @@ pub fn run(
 
     loop {
         // Update spinner frame if busy (~10 fps for spinner animation)
-        if app.state == AppState::Busy && app.last_spinner_update.elapsed() >= Duration::from_millis(100) {
+        if app.state == AppState::Busy
+            && app.last_spinner_update.elapsed() >= Duration::from_millis(100)
+        {
             app.spinner_frame = (app.spinner_frame + 1) % 10;
             app.last_spinner_update = Instant::now();
         }
@@ -455,6 +459,17 @@ pub fn run(
                         break;
                     }
                 }
+                Event::Mouse(mouse) => match mouse.kind {
+                    MouseEventKind::ScrollUp => {
+                        app.scroll = app.scroll.saturating_sub(3);
+                        app.auto_scroll = false;
+                    }
+                    MouseEventKind::ScrollDown => {
+                        app.scroll = app.scroll.saturating_add(3);
+                        app.auto_scroll = true;
+                    }
+                    _ => {}
+                },
                 Event::Resize(_, _) => {
                     // Force full redraw after resize
                     terminal.clear()?;
@@ -471,7 +486,11 @@ pub fn run(
 
     // Cleanup
     crossterm::terminal::disable_raw_mode()?;
-    crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
+    crossterm::execute!(
+        std::io::stdout(),
+        crossterm::event::DisableMouseCapture,
+        crossterm::terminal::LeaveAlternateScreen,
+    )?;
 
     Ok(())
 }

@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
+use tokio_util::sync::CancellationToken;
 
 use crate::api::{ApiClient, Content, ContentBlock, Message, StopReason, Usage};
 use crate::event::EventHandler;
@@ -144,6 +145,7 @@ impl<P: PermissionHandler> Session<P> {
         &mut self,
         input: &str,
         handler: &mut dyn EventHandler,
+        cancel: &CancellationToken,
     ) -> Result<Usage> {
         self.messages.push(Message {
             role: "user".to_string(),
@@ -163,6 +165,10 @@ impl<P: PermissionHandler> Session<P> {
         };
 
         loop {
+            if cancel.is_cancelled() {
+                break;
+            }
+
             let result = self
                 .client
                 .stream_message(
@@ -170,6 +176,7 @@ impl<P: PermissionHandler> Session<P> {
                     Some(&self.system_prompt),
                     tools_param,
                     handler,
+                    cancel,
                 )
                 .await;
 
