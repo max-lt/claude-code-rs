@@ -65,6 +65,7 @@ pub struct App {
     pub pending_perm: Option<PendingPermission>,
     ui_rx: mpsc::UnboundedReceiver<UiEvent>,
     session_tx: mpsc::UnboundedSender<SessionCmd>,
+    ctrl_c_count: u8,
 }
 
 impl App {
@@ -92,6 +93,7 @@ impl App {
             pending_perm: None,
             ui_rx,
             session_tx,
+            ctrl_c_count: 0,
         }
     }
 
@@ -99,9 +101,28 @@ impl App {
 
     /// Returns `true` if the app should quit.
     fn handle_key(&mut self, key: crossterm::event::KeyEvent) -> bool {
-        // Ctrl+C always quits
-        if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            return true;
+        // Esc or Ctrl+C: stop Claude if busy, else quit
+        let is_stop_key = key.code == KeyCode::Esc
+            || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL));
+
+        if is_stop_key {
+            if self.state == AppState::Busy {
+                // First interrupt: stop Claude
+                self.ctrl_c_count += 1;
+                if self.ctrl_c_count == 1 {
+                    let _ = self.session_tx.send(SessionCmd::Stop);
+                    self.messages.push(DisplayMessage::Info(
+                        "⚠ Stopping... (Ctrl+C again to exit)".to_string(),
+                    ));
+                    return false;
+                } else {
+                    // Second Ctrl+C while still busy: force quit
+                    return true;
+                }
+            } else {
+                // Not busy: quit immediately
+                return true;
+            }
         }
 
         // Permission prompt captures y/n
@@ -297,11 +318,13 @@ impl App {
                 self.usage.input_tokens += usage.input_tokens;
                 self.usage.output_tokens += usage.output_tokens;
                 self.state = AppState::Idle;
+                self.ctrl_c_count = 0; // Reset stop counter
             }
 
             UiEvent::Failed(msg) => {
                 self.messages.push(DisplayMessage::Error(msg));
                 self.state = AppState::Idle;
+                self.ctrl_c_count = 0; // Reset stop counter
             }
 
             UiEvent::PermissionRequest {
@@ -331,14 +354,33 @@ async fn session_loop(
     while let Some(cmd) = cmd_rx.recv().await {
         match cmd {
             SessionCmd::SendMessage(text) => {
-                match session.send_message(&text, &mut handler).await {
-                    Ok(usage) => {
+                let message_future = session.send_message(&text, &mut handler);
+                tokio::pin!(message_future);
+
+                let result = tokio::select! {
+                    res = &mut message_future => Some(res),
+                    Some(SessionCmd::Stop) = cmd_rx.recv() => {
+                        // Stop received, cancel the message
+                        None
+                    }
+                };
+
+                match result {
+                    Some(Ok(usage)) => {
                         let _ = ui_tx.send(UiEvent::Done(usage));
                     }
-                    Err(e) => {
+                    Some(Err(e)) => {
                         let _ = ui_tx.send(UiEvent::Failed(e.to_string()));
                     }
+                    None => {
+                        // Stopped by user
+                        let _ = ui_tx.send(UiEvent::Failed("Stopped by user.".to_string()));
+                    }
                 }
+            }
+
+            SessionCmd::Stop => {
+                // Stop command received while idle, ignore
             }
 
             SessionCmd::SetModel(id) => {

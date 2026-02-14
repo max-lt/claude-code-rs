@@ -5,66 +5,82 @@ use ratatui::text::{Line, Span};
 /// Convert markdown text to ratatui Lines with styling.
 pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
     let mut lines = Vec::new();
-    let mut current_line = Vec::new();
+    let mut current_spans: Vec<Span<'static>> = Vec::new();
     let mut style_stack: Vec<Style> = vec![Style::default()];
     let mut in_code_block = false;
     let mut code_block_lines: Vec<String> = Vec::new();
-    let mut list_indent = 0;
+    let mut list_depth: usize = 0;
 
     let options = Options::all();
     let parser = Parser::new_ext(text, options);
 
     for event in parser {
         match event {
+            // ----- Start tags -----
             Event::Start(tag) => match tag {
                 Tag::Heading { .. } => {
+                    flush_line(&mut lines, &mut current_spans);
                     style_stack.push(
                         Style::default()
                             .fg(Color::Cyan)
                             .add_modifier(Modifier::BOLD),
                     );
                 }
+
                 Tag::Emphasis => {
-                    style_stack.push(Style::default().add_modifier(Modifier::ITALIC));
+                    let base = current_style(&style_stack);
+                    style_stack.push(base.add_modifier(Modifier::ITALIC));
                 }
+
                 Tag::Strong => {
-                    style_stack.push(Style::default().add_modifier(Modifier::BOLD));
+                    let base = current_style(&style_stack);
+                    style_stack.push(base.add_modifier(Modifier::BOLD));
                 }
+
                 Tag::CodeBlock(_) => {
+                    flush_line(&mut lines, &mut current_spans);
                     in_code_block = true;
                     code_block_lines.clear();
                 }
+
                 Tag::Link { .. } => {
+                    let base = current_style(&style_stack);
                     style_stack.push(
-                        Style::default()
-                            .fg(Color::Blue)
+                        base.fg(Color::Blue)
                             .add_modifier(Modifier::UNDERLINED),
                     );
                 }
+
                 Tag::List(_) => {
-                    list_indent += 2;
+                    list_depth += 1;
                 }
+
                 Tag::Item => {
-                    if !current_line.is_empty() {
-                        lines.push(Line::from(std::mem::take(&mut current_line)));
-                    }
-                    current_line.push(Span::raw("  ".repeat(list_indent / 2)));
-                    current_line.push(Span::styled("• ", Style::default().fg(Color::Yellow)));
+                    flush_line(&mut lines, &mut current_spans);
+                    let indent = "  ".repeat(list_depth);
+                    current_spans.push(Span::raw(indent));
+                    current_spans
+                        .push(Span::styled("• ", Style::default().fg(Color::Yellow)));
                 }
+
                 _ => {}
             },
 
+            // ----- End tags -----
             Event::End(tag_end) => match tag_end {
-                TagEnd::Heading(_) | TagEnd::Emphasis | TagEnd::Strong | TagEnd::Link => {
+                TagEnd::Heading(_) => {
+                    style_stack.pop();
+                    flush_line(&mut lines, &mut current_spans);
+                    lines.push(Line::default());
+                }
+
+                TagEnd::Emphasis | TagEnd::Strong | TagEnd::Link => {
                     style_stack.pop();
                 }
+
                 TagEnd::CodeBlock => {
                     in_code_block = false;
-                    if !current_line.is_empty() {
-                        lines.push(Line::from(std::mem::take(&mut current_line)));
-                    }
 
-                    // Render code block with background
                     for code_line in &code_block_lines {
                         lines.push(Line::from(vec![
                             Span::raw("  "),
@@ -73,47 +89,64 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                     }
 
                     code_block_lines.clear();
+                    lines.push(Line::default());
                 }
+
+                TagEnd::Item => {
+                    flush_line(&mut lines, &mut current_spans);
+                }
+
                 TagEnd::List(_) => {
-                    list_indent = list_indent.saturating_sub(2);
-                }
-                TagEnd::Paragraph => {
-                    if !current_line.is_empty() {
-                        lines.push(Line::from(std::mem::take(&mut current_line)));
+                    list_depth = list_depth.saturating_sub(1);
+
+                    if list_depth == 0 {
+                        lines.push(Line::default());
                     }
-                    lines.push(Line::default()); // blank line after paragraph
                 }
+
+                TagEnd::Paragraph => {
+                    flush_line(&mut lines, &mut current_spans);
+                    lines.push(Line::default());
+                }
+
                 _ => {}
             },
 
+            // ----- Content -----
             Event::Text(text) => {
                 if in_code_block {
-                    code_block_lines.push(text.to_string());
+                    // Code blocks: split by newlines to preserve structure
+                    for line in text.split('\n') {
+                        code_block_lines.push(line.to_string());
+                    }
                 } else {
-                    let current_style = *style_stack.last().unwrap_or(&Style::default());
-                    current_line.push(Span::styled(text.to_string(), current_style));
+                    let style = current_style(&style_stack);
+                    current_spans.push(Span::styled(text.to_string(), style));
                 }
             }
 
             Event::Code(code) => {
-                current_line.push(Span::styled(
+                current_spans.push(Span::styled(
                     code.to_string(),
                     Style::default().fg(Color::Green),
                 ));
             }
 
-            Event::SoftBreak | Event::HardBreak => {
-                if !in_code_block && !current_line.is_empty() {
-                    lines.push(Line::from(std::mem::take(&mut current_line)));
+            Event::SoftBreak => {
+                // Soft break = space in normal flow
+                if !in_code_block {
+                    flush_line(&mut lines, &mut current_spans);
                 }
             }
 
+            Event::HardBreak => {
+                flush_line(&mut lines, &mut current_spans);
+            }
+
             Event::Rule => {
-                if !current_line.is_empty() {
-                    lines.push(Line::from(std::mem::take(&mut current_line)));
-                }
+                flush_line(&mut lines, &mut current_spans);
                 lines.push(Line::styled(
-                    "─".repeat(80),
+                    "─".repeat(60),
                     Style::default().fg(Color::DarkGray),
                 ));
                 lines.push(Line::default());
@@ -124,11 +157,21 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
     }
 
     // Flush remaining content
-    if !current_line.is_empty() {
-        lines.push(Line::from(current_line));
-    }
+    flush_line(&mut lines, &mut current_spans);
 
     lines
+}
+
+/// Push current_spans as a Line and clear the buffer.
+fn flush_line(lines: &mut Vec<Line<'static>>, spans: &mut Vec<Span<'static>>) {
+    if !spans.is_empty() {
+        lines.push(Line::from(std::mem::take(spans)));
+    }
+}
+
+/// Get the current active style from the stack.
+fn current_style(stack: &[Style]) -> Style {
+    *stack.last().unwrap_or(&Style::default())
 }
 
 #[cfg(test)]
@@ -147,5 +190,21 @@ mod tests {
         let md = "```rust\nfn main() {}\n```";
         let lines = render_markdown(md);
         assert!(!lines.is_empty());
+    }
+
+    #[test]
+    fn test_list() {
+        let md = "- Item 1\n- Item 2\n  - Nested";
+        let lines = render_markdown(md);
+        // Should have items with bullet points
+        assert!(lines.len() >= 3);
+    }
+
+    #[test]
+    fn test_heading_spacing() {
+        let md = "# Title\n\nParagraph text.";
+        let lines = render_markdown(md);
+        // Title, blank, paragraph, blank
+        assert!(lines.len() >= 3);
     }
 }

@@ -33,6 +33,7 @@ pub enum SessionCmd {
     SendMessage(String),
     SetModel(String),
     Clear,
+    Stop,
 }
 
 /// Bridges `EventHandler` trait calls into `UiEvent` channel sends.
