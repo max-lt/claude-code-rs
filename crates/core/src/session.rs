@@ -226,7 +226,7 @@ impl<P: PermissionHandler> Session<P> {
                 _ => continue,
             };
 
-            handler.on_tool_use_start(name, id);
+            handler.on_tool_use_start(name, id, input);
 
             // Permission check
             let perm_tool = tools::to_permission_tool(name, input);

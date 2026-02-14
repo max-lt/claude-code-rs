@@ -11,6 +11,7 @@ pub enum UiEvent {
     Error(String),
     ToolStart {
         name: String,
+        input: serde_json::Value,
     },
     ToolExecuting {
         input: serde_json::Value,
@@ -50,9 +51,10 @@ impl EventHandler for ChannelEventHandler {
         let _ = self.tx.send(UiEvent::Error(message.to_string()));
     }
 
-    fn on_tool_use_start(&mut self, name: &str, _id: &str) {
+    fn on_tool_use_start(&mut self, name: &str, _id: &str, input: &serde_json::Value) {
         let _ = self.tx.send(UiEvent::ToolStart {
             name: name.to_string(),
+            input: input.clone(),
         });
     }
 
