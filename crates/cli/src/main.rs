@@ -4,12 +4,21 @@ mod tui;
 mod ui;
 
 use anyhow::Result;
+use clap::Parser;
 
 use claude_code_core::config::{Credentials, TokenType};
 use claude_code_core::session::SessionBuilder;
 use claude_code_core::{auth, config};
 
 use permissions::ChannelPermissions;
+
+#[derive(Parser)]
+#[command(name = "ccrs", version, about = "Claude Code — Rust edition")]
+struct Cli {
+    /// Force re-login, ignoring saved credentials
+    #[arg(long)]
+    login: bool,
+}
 
 async fn login() -> Result<Credentials> {
     let method = ui::prompt_login_method()?;
@@ -54,14 +63,16 @@ async fn get_access_token(creds: &Credentials) -> Result<(String, bool, Option<C
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let cli = Cli::parse();
+
     println!("claude-code-rs v0.1.0\n");
 
     let creds = match config::load_credentials()? {
-        Some(c) => {
+        Some(c) if !cli.login => {
             println!("Loaded saved credentials.");
             c
         }
-        None => {
+        _ => {
             let c = login().await?;
             config::save_credentials(&c)?;
             println!("Credentials saved.");
@@ -79,9 +90,9 @@ async fn main() -> Result<()> {
     let settings = config::load_settings(&cwd);
 
     let (ui_tx, ui_rx) = tokio::sync::mpsc::unbounded_channel();
-    let perms = ChannelPermissions::new(settings.permissions, cwd, ui_tx.clone());
+    let perms = ChannelPermissions::new(settings.permissions, cwd.clone(), ui_tx.clone());
 
     let session = SessionBuilder::new(access_token, is_oauth).permissions(perms)?;
 
-    tui::run(session, ui_tx, ui_rx)
+    tui::run(cwd, session, ui_tx, ui_rx)
 }

@@ -1,6 +1,8 @@
 mod event;
+mod markdown;
 mod render;
 
+use std::path::PathBuf;
 use std::sync::mpsc as std_mpsc;
 use std::time::Duration;
 
@@ -51,6 +53,7 @@ pub enum DisplayMessage {
 // ---------------------------------------------------------------------------
 
 pub struct App {
+    pub cwd: PathBuf,
     pub model: String,
     pub usage: Usage,
     pub messages: Vec<DisplayMessage>,
@@ -66,11 +69,13 @@ pub struct App {
 
 impl App {
     fn new(
+        cwd: PathBuf,
         model: String,
         ui_rx: mpsc::UnboundedReceiver<UiEvent>,
         session_tx: mpsc::UnboundedSender<SessionCmd>,
     ) -> Self {
         Self {
+            cwd,
             model,
             usage: Usage {
                 input_tokens: 0,
@@ -352,6 +357,7 @@ async fn session_loop(
 // ---------------------------------------------------------------------------
 
 pub fn run(
+    cwd: PathBuf,
     session: Session<ChannelPermissions>,
     ui_tx: mpsc::UnboundedSender<UiEvent>,
     ui_rx: mpsc::UnboundedReceiver<UiEvent>,
@@ -381,7 +387,7 @@ pub fn run(
         original_hook(info);
     }));
 
-    let mut app = App::new(model, ui_rx, session_tx);
+    let mut app = App::new(cwd, model, ui_rx, session_tx);
 
     // Start with a clean alternate screen
     terminal.clear()?;

@@ -1,9 +1,12 @@
+use std::path::Path;
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
+use super::markdown::render_markdown;
 use super::{App, AppState, DisplayMessage};
 
 /// Render the entire UI.
@@ -62,11 +65,8 @@ fn render_messages(app: &App, frame: &mut Frame, area: Rect) {
             }
 
             DisplayMessage::AssistantText(text) => {
-                for line in text.lines() {
-                    lines.push(Line::raw(line.to_string()));
-                }
-
-                lines.push(Line::default());
+                let markdown_lines = render_markdown(text);
+                lines.extend(markdown_lines);
             }
 
             DisplayMessage::ToolUse {
@@ -75,7 +75,7 @@ fn render_messages(app: &App, frame: &mut Frame, area: Rect) {
                 output,
                 is_error,
             } => {
-                render_tool_block(&mut lines, name, input, output, *is_error);
+                render_tool_block(&mut lines, name, input, output, *is_error, &app.cwd);
             }
 
             DisplayMessage::Error(text) => {
@@ -130,20 +130,25 @@ fn render_tool_block<'a>(
     input: &Option<serde_json::Value>,
     output: &Option<String>,
     is_error: bool,
+    cwd: &Path,
 ) {
     let border = Style::new().fg(Color::DarkGray);
+
+    // Format header + input based on tool type
+    let (header, display) = match input {
+        Some(inp) => format_tool_display(name, inp, cwd),
+        None => (name.to_string(), None),
+    };
 
     // Header
     lines.push(Line::from(vec![
         Span::styled("┌ ", border),
-        Span::styled(name, Style::new().fg(Color::Yellow).bold()),
+        Span::styled(header, Style::new().fg(Color::Yellow).bold()),
         Span::styled(" ─".to_string() + &"─".repeat(20), border),
     ]));
 
-    // Input
-    if let Some(input) = input {
-        let display = format_tool_input(input);
-
+    // Input display
+    if let Some(display) = &display {
         for line in display.lines() {
             lines.push(Line::from(vec![
                 Span::styled("│ ", border),
@@ -186,6 +191,134 @@ fn render_tool_block<'a>(
     lines.push(Line::default());
 }
 
+// ---------------------------------------------------------------------------
+// Tool display formatting
+// ---------------------------------------------------------------------------
+
+/// Returns (header, optional body) for the tool block.
+fn format_tool_display(
+    name: &str,
+    input: &serde_json::Value,
+    cwd: &Path,
+) -> (String, Option<String>) {
+    match name {
+        "Bash" => {
+            let cmd = str_field(input, "command");
+            (name.to_string(), Some(cmd.to_string()))
+        }
+
+        "Read" => {
+            let path = relative_path(str_field(input, "file_path"), cwd);
+            (format!("Read {path}"), None)
+        }
+
+        "Write" => {
+            let path = relative_path(str_field(input, "file_path"), cwd);
+            let content = str_field(input, "content");
+            let line_count = content.lines().count();
+            (format!("Write {path} ({line_count} lines)"), None)
+        }
+
+        "Edit" => {
+            let path = relative_path(str_field(input, "file_path"), cwd);
+            let old = str_field(input, "old_string");
+            let new = str_field(input, "new_string");
+            let body = format_edit_diff(old, new);
+            (format!("Edit {path}"), Some(body))
+        }
+
+        "Glob" => {
+            let pattern = str_field(input, "pattern");
+            let path = input.get("path").and_then(|v| v.as_str());
+
+            let header = match path {
+                Some(p) => format!("Glob {pattern} in {}", relative_path(p, cwd)),
+                None => format!("Glob {pattern}"),
+            };
+
+            (header, None)
+        }
+
+        "Grep" => {
+            let pattern = str_field(input, "pattern");
+            let path = input.get("path").and_then(|v| v.as_str());
+            let glob = input.get("glob").and_then(|v| v.as_str());
+
+            let mut header = format!("Grep {pattern}");
+
+            if let Some(g) = glob {
+                header.push_str(&format!(" --glob {g}"));
+            }
+
+            if let Some(p) = path {
+                header.push_str(&format!(" in {}", relative_path(p, cwd)));
+            }
+
+            (header, None)
+        }
+
+        "Fetch" => {
+            let url = str_field(input, "url");
+            let method = input
+                .get("method")
+                .and_then(|v| v.as_str())
+                .unwrap_or("GET");
+
+            (format!("Fetch {method} {url}"), None)
+        }
+
+        "Git" => {
+            let sub = str_field(input, "subcommand");
+            (format!("Git {sub}"), None)
+        }
+
+        "Search" => {
+            let query = str_field(input, "query");
+            (format!("Search \"{query}\""), None)
+        }
+
+        _ => {
+            let body = serde_json::to_string_pretty(input).unwrap_or_default();
+            (name.to_string(), Some(body))
+        }
+    }
+}
+
+/// Format an Edit diff: lines prefixed with - and +.
+fn format_edit_diff(old: &str, new: &str) -> String {
+    let mut out = String::new();
+
+    for line in old.lines() {
+        out.push_str(&format!("- {line}\n"));
+    }
+
+    for line in new.lines() {
+        out.push_str(&format!("+ {line}\n"));
+    }
+
+    // Remove trailing newline
+    if out.ends_with('\n') {
+        out.pop();
+    }
+
+    out
+}
+
+/// Make a path relative to cwd if it's inside it, otherwise return as-is.
+fn relative_path(path: &str, cwd: &Path) -> String {
+    let p = Path::new(path);
+
+    match p.strip_prefix(cwd) {
+        Ok(rel) => rel.display().to_string(),
+        Err(_) => path.to_string(),
+    }
+}
+
+/// Extract a string field from JSON input, with empty fallback.
+fn str_field<'a>(input: &'a serde_json::Value, key: &str) -> &'a str {
+    input.get(key).and_then(|v| v.as_str()).unwrap_or("")
+}
+
 fn render_input(app: &App, frame: &mut Frame, area: Rect) {
     let display_text = format!("> {}", app.input);
 
@@ -200,13 +333,6 @@ fn render_input(app: &App, frame: &mut Frame, area: Rect) {
     let cursor_x = area.x + 2 + app.cursor as u16;
     let cursor_y = area.y + 1;
     frame.set_cursor_position((cursor_x, cursor_y));
-}
-
-fn format_tool_input(input: &serde_json::Value) -> String {
-    match input.get("command").and_then(|c| c.as_str()) {
-        Some(cmd) => cmd.to_string(),
-        None => serde_json::to_string_pretty(input).unwrap_or_default(),
-    }
 }
 
 fn format_tokens(n: u64) -> String {
