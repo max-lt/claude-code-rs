@@ -60,6 +60,7 @@ pub struct App {
     pub messages: Vec<DisplayMessage>,
     pub scroll: u16,
     pub auto_scroll: bool,
+    pub max_scroll: u16,
     pub input: String,
     pub cursor: usize,
     pub state: AppState,
@@ -89,6 +90,7 @@ impl App {
             )],
             scroll: 0,
             auto_scroll: true,
+            max_scroll: 0,
             input: String::new(),
             cursor: 0,
             state: AppState::Idle,
@@ -449,7 +451,7 @@ pub fn run(
             app.last_spinner_update = Instant::now();
         }
 
-        terminal.draw(|f| render::render(&app, f))?;
+        terminal.draw(|f| render::render(&mut app, f))?;
 
         // Poll crossterm events (~30 fps)
         if crossterm::event::poll(Duration::from_millis(33))? {
@@ -466,7 +468,10 @@ pub fn run(
                     }
                     MouseEventKind::ScrollDown => {
                         app.scroll = app.scroll.saturating_add(3);
-                        app.auto_scroll = true;
+                        // Re-enable auto-scroll if we've reached the bottom
+                        if app.scroll >= app.max_scroll {
+                            app.auto_scroll = true;
+                        }
                     }
                     _ => {}
                 },

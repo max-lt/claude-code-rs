@@ -10,7 +10,7 @@ use super::markdown::render_markdown;
 use super::{App, AppState, DisplayMessage};
 
 /// Render the entire UI.
-pub fn render(app: &App, frame: &mut Frame) {
+pub fn render(app: &mut App, frame: &mut Frame) {
     let area = frame.area();
 
     let chunks = Layout::vertical([
@@ -44,7 +44,7 @@ fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
     frame.render_widget(widget, area);
 }
 
-fn render_messages(app: &App, frame: &mut Frame, area: Rect) {
+fn render_messages(app: &mut App, frame: &mut Frame, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
 
     for msg in &app.messages {
@@ -103,6 +103,9 @@ fn render_messages(app: &App, frame: &mut Frame, area: Rect) {
 
     let content_height = wrapped_line_count(&lines, area.width);
     let max_scroll = content_height.saturating_sub(area.height);
+    
+    // Store max_scroll for scroll event handling
+    app.max_scroll = max_scroll;
 
     let scroll = if app.auto_scroll {
         max_scroll
