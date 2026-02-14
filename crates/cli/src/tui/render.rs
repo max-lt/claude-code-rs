@@ -262,6 +262,20 @@ fn format_tool_display(
             (header, None)
         }
 
+        "List" => {
+            let path = input
+                .get("path")
+                .and_then(|v| v.as_str())
+                .map(|p| relative_path(p, cwd));
+
+            let header = match path {
+                Some(p) => format!("List {p}"),
+                None => "List .".to_string(),
+            };
+
+            (header, None)
+        }
+
         "Fetch" => {
             let url = str_field(input, "url");
             let method = input

@@ -67,13 +67,14 @@ impl SessionBuilder {
              - **Read**: Read a file's contents. Always prefer this over `cat` or `head`.\n\
              - **Write**: Write content to a file. Always prefer this over shell redirects.\n\
              - **Edit**: Perform exact string replacements in files.\n\
-             - **Glob**: Find files by glob pattern (e.g. \"**/*.rs\").\n\
+             - **Glob**: Find files by glob pattern (e.g. \"**/*.rs\"). Use this instead of `find`.\n\
+             - **List**: List directory contents. Use this instead of `ls`.\n\
              - **Fetch**: Make HTTP requests (GET, POST, etc.). Use this instead of curl/wget.\n\
-             - **Grep**: Search file contents with regex.{git_tool_line}{search_tool_line}\n\
+             - **Grep**: Search file contents with regex. Use this instead of `grep`.{git_tool_line}{search_tool_line}\n\
              \n\
              Important:\n\
              - Use Read/Write/Edit instead of Bash for file operations.\n\
-             - Use Glob/Grep instead of find/grep commands.\n\
+             - Use List instead of `ls`, Glob instead of `find`, Grep instead of `grep`.\n\
              - Use Fetch instead of curl/wget for HTTP requests.{git_use_hint}\n\
              - Keep responses concise.\n\
              - When executing commands, use the working directory as the base for relative paths.",
