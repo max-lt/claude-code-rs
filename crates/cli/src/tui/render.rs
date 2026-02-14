@@ -26,15 +26,6 @@ pub fn render(app: &App, frame: &mut Frame) {
 }
 
 fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
-    // Spinner frames (unicode braille patterns for smooth animation)
-    const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-    
-    let busy = if app.state == AppState::Busy {
-        format!(" {}", SPINNER_FRAMES[app.spinner_frame % SPINNER_FRAMES.len()])
-    } else {
-        String::new()
-    };
-
     let tokens = format!(
         "{}↑ {}↓",
         format_tokens(app.usage.input_tokens),
@@ -47,7 +38,6 @@ fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
         Span::raw(&app.model),
         Span::raw(" │ "),
         Span::raw(tokens),
-        Span::styled(busy, Style::new().fg(Color::Green)),
     ]);
 
     let widget = Paragraph::new(bar).style(Style::new().bg(Color::DarkGray).fg(Color::White));
@@ -335,16 +325,23 @@ fn str_field<'a>(input: &'a serde_json::Value, key: &str) -> &'a str {
 }
 
 fn render_input(app: &App, frame: &mut Frame, area: Rect) {
-    let display_text = format!("> {}", app.input);
+    const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+    let prompt = if app.state == AppState::Busy {
+        let frame_char = SPINNER[app.spinner_frame % SPINNER.len()];
+        format!("{frame_char} {}", app.input)
+    } else {
+        format!("> {}", app.input)
+    };
 
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::new().fg(Color::DarkGray));
 
-    let input_widget = Paragraph::new(display_text).block(block);
+    let input_widget = Paragraph::new(prompt).block(block);
     frame.render_widget(input_widget, area);
 
-    // Position cursor: area.x + 2 (">" + space) + cursor offset, area.y + 1 (border)
+    // Position cursor: area.x + 2 (prompt + space) + cursor offset, area.y + 1 (border)
     let cursor_x = area.x + 2 + app.cursor as u16;
     let cursor_y = area.y + 1;
     frame.set_cursor_position((cursor_x, cursor_y));

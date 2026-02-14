@@ -17,6 +17,7 @@ voice = ["dep:cpal", "dep:hound"]
 claude-code-core = { path = "../core" }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
 anyhow = "1"
 ratatui = { version = "0.30", features = ["crossterm"] }
 dialoguer = "0.12"

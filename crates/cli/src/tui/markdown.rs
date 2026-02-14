@@ -45,10 +45,7 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
 
                 Tag::Link { .. } => {
                     let base = current_style(&style_stack);
-                    style_stack.push(
-                        base.fg(Color::Blue)
-                            .add_modifier(Modifier::UNDERLINED),
-                    );
+                    style_stack.push(base.fg(Color::Blue).add_modifier(Modifier::UNDERLINED));
                 }
 
                 Tag::List(_) => {
@@ -59,8 +56,7 @@ pub fn render_markdown(text: &str) -> Vec<Line<'static>> {
                     flush_line(&mut lines, &mut current_spans);
                     let indent = "  ".repeat(list_depth);
                     current_spans.push(Span::raw(indent));
-                    current_spans
-                        .push(Span::styled("• ", Style::default().fg(Color::Yellow)));
+                    current_spans.push(Span::styled("• ", Style::default().fg(Color::Yellow)));
                 }
 
                 _ => {}

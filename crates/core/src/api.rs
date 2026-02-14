@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use futures::StreamExt;
 use reqwest_eventsource::{Event, EventSource};
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 
 use crate::event::EventHandler;
 
@@ -294,27 +295,39 @@ impl ApiClient {
         system_prompt: Option<&str>,
         tools: Option<&[serde_json::Value]>,
         handler: &mut dyn EventHandler,
+        cancel: &CancellationToken,
     ) -> Result<StreamResult> {
         let request = self.build_request(messages, system_prompt, tools);
         let mut es = EventSource::new(request).context("Failed to create event source")?;
 
         let mut state = StreamState::new();
 
-        while let Some(event) = es.next().await {
-            match event {
-                Ok(Event::Open) => {}
-                Ok(Event::Message(msg)) => {
-                    let done = handle_sse_event(&msg.event, &msg.data, &mut state, handler)?;
+        loop {
+            tokio::select! {
+                event = es.next() => {
+                    let Some(event) = event else { break };
 
-                    if done {
-                        es.close();
-                        break;
+                    match event {
+                        Ok(Event::Open) => {}
+                        Ok(Event::Message(msg)) => {
+                            let done = handle_sse_event(&msg.event, &msg.data, &mut state, handler)?;
+
+                            if done {
+                                es.close();
+                                break;
+                            }
+                        }
+                        Err(reqwest_eventsource::Error::StreamEnded) => break,
+                        Err(e) => {
+                            es.close();
+                            anyhow::bail!("Stream error: {e}");
+                        }
                     }
                 }
-                Err(reqwest_eventsource::Error::StreamEnded) => break,
-                Err(e) => {
+
+                () = cancel.cancelled() => {
                     es.close();
-                    anyhow::bail!("Stream error: {e}");
+                    anyhow::bail!("Cancelled");
                 }
             }
         }
