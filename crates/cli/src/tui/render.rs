@@ -331,7 +331,76 @@ fn format_tool_display(
 
         "Git" => {
             let sub = str_field(input, "subcommand");
-            (format!("Git {sub}"), None)
+
+            let args = match sub {
+                "add" | "unstage" => {
+                    if let Some(arr) = input.get("pathspec").and_then(|v| v.as_array()) {
+                        let paths: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
+                        Some(paths.join(" "))
+                    } else {
+                        None
+                    }
+                }
+
+                "commit" => input.get("message").and_then(|v| v.as_str()).map(|s| {
+                    // Truncate long messages
+                    if s.len() > 60 {
+                        format!("\"{}...\"", &s[..60])
+                    } else {
+                        format!("\"{s}\"")
+                    }
+                }),
+
+                "push" => {
+                    let remote = str_field(input, "remote");
+                    let refspec = str_field(input, "refspec");
+                    let force = input
+                        .get("force")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let force_flag = if force { " --force" } else { "" };
+                    Some(format!("{remote} {refspec}{force_flag}"))
+                }
+
+                "reset" => {
+                    let target = str_field(input, "target");
+                    let mode = str_field(input, "mode");
+                    Some(format!("{target} --{mode}"))
+                }
+
+                "checkout" => input
+                    .get("branch_name")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+
+                "create_branch" => {
+                    let name = str_field(input, "name");
+                    let start_point = input.get("start_point").and_then(|v| v.as_str());
+                    match start_point {
+                        Some(sp) => Some(format!("{name} (from {sp})")),
+                        None => Some(name.to_string()),
+                    }
+                }
+
+                "delete_branch" => {
+                    let name = str_field(input, "name");
+                    let force = input
+                        .get("force")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let force_flag = if force { " --force" } else { "" };
+                    Some(format!("{name}{force_flag}"))
+                }
+
+                _ => None,
+            };
+
+            let header = match args {
+                Some(a) => format!("Git {sub} {a}"),
+                None => format!("Git {sub}"),
+            };
+
+            (header, None)
         }
 
         "Search" => {
