@@ -1,5 +1,3 @@
-#![allow(dead_code)] // TODO: re-integrate with TUI (Phase 5)
-
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 
@@ -9,21 +7,37 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
 use super::CommandResult;
 
+/// Run voice recording outside of TUI raw mode.
+/// This function temporarily disables raw mode, records, transcribes, and prompts for edits.
 pub async fn run() -> Result<CommandResult> {
     let api_key =
         std::env::var("MISTRAL_API_KEY").map_err(|_| anyhow!("MISTRAL_API_KEY not set"))?;
 
-    eprintln!("Recording… (press Enter to stop)");
+    // Temporarily leave raw mode for recording
+    crossterm::terminal::disable_raw_mode()?;
+    crossterm::execute!(
+        std::io::stdout(),
+        crossterm::terminal::LeaveAlternateScreen,
+    )?;
+
+    println!("🎤 Recording… (press Enter to stop)");
     let (samples, sample_rate) = record_audio()?;
     let wav = encode_wav(&samples, sample_rate)?;
 
-    eprintln!("Transcribing…");
+    println!("✨ Transcribing…");
     let text = transcribe(&api_key, wav).await?;
 
     let final_text: String = dialoguer::Input::new()
-        .with_prompt(">")
+        .with_prompt("Edit transcription")
         .with_initial_text(&text)
         .interact_text()?;
+
+    // Return to TUI mode - the caller will re-enable raw mode
+    crossterm::execute!(
+        std::io::stdout(),
+        crossterm::terminal::EnterAlternateScreen,
+    )?;
+    crossterm::terminal::enable_raw_mode()?;
 
     Ok(CommandResult::SendMessage(final_text))
 }
