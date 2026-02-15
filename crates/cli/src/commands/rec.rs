@@ -29,10 +29,7 @@ pub async fn run() -> Result<CommandResult> {
         .with_initial_text(&text)
         .interact_text()?;
 
-    // Return to TUI mode - the caller will re-enable raw mode
-    crossterm::execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen,)?;
-    crossterm::terminal::enable_raw_mode()?;
-
+    // Don't re-enable raw mode here - the TUI loop will handle it
     Ok(CommandResult::SendMessage(final_text))
 }
 
