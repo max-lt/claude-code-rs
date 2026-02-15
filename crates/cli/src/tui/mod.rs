@@ -262,7 +262,7 @@ impl App {
                 #[cfg(feature = "voice")]
                 CommandResult::RecordVoice => {
                     self.messages.push(DisplayMessage::Info(
-                        "Entering voice recording mode...".to_string()
+                        "Entering voice recording mode...".to_string(),
                     ));
                     self.pending_voice_recording = true;
                     return false;
@@ -467,17 +467,16 @@ pub fn run(
         #[cfg(feature = "voice")]
         if app.pending_voice_recording {
             app.pending_voice_recording = false;
-            
+
             // Exit TUI temporarily - rec::run() handles terminal state
             drop(terminal);
-            
+
             // Run voice recording (async, blocks until done)
             let rec_result = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(async {
-                    crate::commands::rec::run().await
-                })
+                tokio::runtime::Handle::current()
+                    .block_on(async { crate::commands::rec::run().await })
             });
-            
+
             // Recreate terminal and re-enable raw mode
             crossterm::terminal::enable_raw_mode()?;
             crossterm::execute!(
@@ -488,7 +487,7 @@ pub fn run(
             let backend = CrosstermBackend::new(std::io::stdout());
             terminal = Terminal::new(backend)?;
             terminal.clear()?;
-            
+
             // Process result
             match rec_result {
                 Ok(CommandResult::SendMessage(msg)) => {
@@ -498,9 +497,9 @@ pub fn run(
                     let _ = app.session_tx.send(SessionCmd::SendMessage(msg));
                 }
                 Err(e) => {
-                    app.messages.push(DisplayMessage::Error(
-                        format!("Voice recording failed: {e}")
-                    ));
+                    app.messages.push(DisplayMessage::Error(format!(
+                        "Voice recording failed: {e}"
+                    )));
                 }
                 _ => {}
             }
