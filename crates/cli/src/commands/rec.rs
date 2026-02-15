@@ -15,10 +15,7 @@ pub async fn run() -> Result<CommandResult> {
 
     // Temporarily leave raw mode for recording
     crossterm::terminal::disable_raw_mode()?;
-    crossterm::execute!(
-        std::io::stdout(),
-        crossterm::terminal::LeaveAlternateScreen,
-    )?;
+    crossterm::execute!(std::io::stdout(), crossterm::terminal::LeaveAlternateScreen,)?;
 
     println!("🎤 Recording… (press Enter to stop)");
     let (samples, sample_rate) = record_audio()?;
@@ -33,10 +30,7 @@ pub async fn run() -> Result<CommandResult> {
         .interact_text()?;
 
     // Return to TUI mode - the caller will re-enable raw mode
-    crossterm::execute!(
-        std::io::stdout(),
-        crossterm::terminal::EnterAlternateScreen,
-    )?;
+    crossterm::execute!(std::io::stdout(), crossterm::terminal::EnterAlternateScreen,)?;
     crossterm::terminal::enable_raw_mode()?;
 
     Ok(CommandResult::SendMessage(final_text))

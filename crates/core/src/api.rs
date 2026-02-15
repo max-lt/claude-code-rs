@@ -12,6 +12,10 @@ const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_VERSION: &str = "2023-06-01";
 const MAX_TOKENS: u32 = 16384;
 
+// Conservative limit for request payload size (Anthropic's limit is ~5MB)
+const MAX_REQUEST_SIZE: usize = 4 * 1024 * 1024; // 4 MB
+const MAX_TOOL_RESULT_SIZE: usize = 500_000; // 500 KB per tool result
+
 pub const DEFAULT_MODEL: &str = "claude-sonnet-4-5";
 
 pub const AVAILABLE_MODELS: &[(&str, &str)] = &[
@@ -249,6 +253,54 @@ impl ApiClient {
         self.model = model;
     }
 
+    /// Truncate tool results in messages to prevent oversized requests
+    fn truncate_tool_results(messages: &[Message]) -> Vec<Message> {
+        messages
+            .iter()
+            .map(|msg| {
+                let content = match &msg.content {
+                    Content::Blocks(blocks) => {
+                        let truncated_blocks: Vec<ContentBlock> = blocks
+                            .iter()
+                            .map(|block| match block {
+                                ContentBlock::ToolResult {
+                                    tool_use_id,
+                                    content,
+                                    is_error,
+                                } => {
+                                    if content.len() > MAX_TOOL_RESULT_SIZE {
+                                        let truncated = format!(
+                                            "{}... [truncated {} bytes]",
+                                            &content[..MAX_TOOL_RESULT_SIZE],
+                                            content.len() - MAX_TOOL_RESULT_SIZE
+                                        );
+
+                                        ContentBlock::ToolResult {
+                                            tool_use_id: tool_use_id.clone(),
+                                            content: truncated,
+                                            is_error: *is_error,
+                                        }
+                                    } else {
+                                        block.clone()
+                                    }
+                                }
+                                _ => block.clone(),
+                            })
+                            .collect();
+
+                        Content::Blocks(truncated_blocks)
+                    }
+                    _ => msg.content.clone(),
+                };
+
+                Message {
+                    role: msg.role.clone(),
+                    content,
+                }
+            })
+            .collect()
+    }
+
     fn build_request(
         &self,
         messages: &[Message],
@@ -297,7 +349,40 @@ impl ApiClient {
         handler: &mut dyn EventHandler,
         cancel: &CancellationToken,
     ) -> Result<StreamResult> {
-        let request = self.build_request(messages, system_prompt, tools);
+        // Truncate tool results to prevent oversized requests
+        let truncated_messages = Self::truncate_tool_results(messages);
+
+        // Build the request body to check its size
+        let mut body = serde_json::json!({
+            "model": self.model,
+            "max_tokens": MAX_TOKENS,
+            "stream": true,
+            "messages": truncated_messages,
+        });
+
+        if let Some(prompt) = system_prompt {
+            body["system"] = serde_json::json!(prompt);
+        }
+
+        if let Some(tools) = tools
+            && !tools.is_empty()
+        {
+            body["tools"] = serde_json::json!(tools);
+        }
+
+        // Check request size
+        let body_json = serde_json::to_string(&body)?;
+        let body_size = body_json.len();
+
+        if body_size > MAX_REQUEST_SIZE {
+            anyhow::bail!(
+                "Request too large ({} MB). The conversation history is too long. \
+                 Please use /clear to start a new conversation.",
+                body_size / (1024 * 1024)
+            );
+        }
+
+        let request = self.build_request(&truncated_messages, system_prompt, tools);
         let mut es = EventSource::new(request).context("Failed to create event source")?;
 
         let mut state = StreamState::new();
@@ -320,6 +405,17 @@ impl ApiClient {
                         Err(reqwest_eventsource::Error::StreamEnded) => break,
                         Err(e) => {
                             es.close();
+
+                            // Better error messages for common cases
+                            let err_str = e.to_string();
+
+                            if err_str.contains("400") || err_str.contains("Bad Request") {
+                                anyhow::bail!(
+                                    "API request rejected (400 Bad Request). The request may be too large. \
+                                     Try using /clear to start a new conversation."
+                                );
+                            }
+
                             anyhow::bail!("Stream error: {e}");
                         }
                     }
@@ -395,10 +491,43 @@ fn handle_sse_event(
                 .and_then(|m| m.as_str())
                 .unwrap_or("Unknown error");
             handler.on_error(msg);
+            return Ok(true); // Stop stream on error
         }
         "ping" => {}
         _ => {}
     }
 
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_truncate_tool_results() {
+        let large_content = "x".repeat(MAX_TOOL_RESULT_SIZE + 1000);
+
+        let messages = vec![Message {
+            role: "user".to_string(),
+            content: Content::Blocks(vec![ContentBlock::ToolResult {
+                tool_use_id: "test".to_string(),
+                content: large_content.clone(),
+                is_error: Some(false),
+            }]),
+        }];
+
+        let truncated = ApiClient::truncate_tool_results(&messages);
+
+        match &truncated[0].content {
+            Content::Blocks(blocks) => match &blocks[0] {
+                ContentBlock::ToolResult { content, .. } => {
+                    assert!(content.len() < large_content.len());
+                    assert!(content.contains("[truncated"));
+                }
+                _ => panic!("Expected ToolResult"),
+            },
+            _ => panic!("Expected Blocks"),
+        }
+    }
 }
