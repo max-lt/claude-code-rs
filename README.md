@@ -45,6 +45,25 @@ Then type your messages at the `>` prompt. Claude streams responses and uses too
 | `/clear` | | Clear conversation history |
 | `/model` | | List available models |
 | `/model <name>` | | Switch model (e.g. `/model opus`) |
+| `/rec` | | Record and transcribe voice input (requires `MISTRAL_API_KEY`) |
+
+### Voice Input
+
+The `/rec` command uses [Mistral AI's Voxtral](https://mistral.ai/) for transcription:
+
+1. Set `MISTRAL_API_KEY` environment variable
+2. Type `/rec` in the CLI
+3. Speak into your microphone
+4. Press Enter to stop recording
+5. Edit the transcription if needed
+6. Press Enter to send the message
+
+```bash
+export MISTRAL_API_KEY=your_api_key_here
+ccrs
+```
+
+**Note:** Voice recording temporarily exits the TUI to access the microphone. You'll return to the TUI after transcription.
 
 ### Permissions
 
