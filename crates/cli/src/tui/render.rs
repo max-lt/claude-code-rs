@@ -8,27 +8,36 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use super::markdown::render_markdown;
 use super::{App, AppState, DisplayMessage};
+use crate::commands;
 
 /// Render the entire UI.
 pub fn render(app: &mut App, frame: &mut Frame) {
     let area = frame.area();
 
     let has_perm = app.pending_perm.is_some();
+    let suggestions = slash_suggestions(&app.input);
+    let suggestion_height = if suggestions.is_empty() {
+        0u16
+    } else {
+        (suggestions.len() as u16) + 1 // +1 for the top border
+    };
 
     let chunks = if has_perm {
         Layout::vertical([
-            Constraint::Length(1), // status bar
-            Constraint::Min(1),    // messages
-            Constraint::Length(2), // permission prompt
-            Constraint::Length(3), // input area
+            Constraint::Length(1),                  // status bar
+            Constraint::Min(1),                     // messages
+            Constraint::Length(2),                   // permission prompt
+            Constraint::Length(suggestion_height),   // command suggestions
+            Constraint::Length(3),                   // input area
         ])
         .split(area)
     } else {
         Layout::vertical([
-            Constraint::Length(1), // status bar
-            Constraint::Min(1),    // messages
-            Constraint::Length(0), // no permission prompt
-            Constraint::Length(3), // input area
+            Constraint::Length(1),                  // status bar
+            Constraint::Min(1),                     // messages
+            Constraint::Length(0),                   // no permission prompt
+            Constraint::Length(suggestion_height),   // command suggestions
+            Constraint::Length(3),                   // input area
         ])
         .split(area)
     };
@@ -40,7 +49,11 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         render_permission(app, frame, chunks[2]);
     }
 
-    render_input(app, frame, chunks[2 + 1]);
+    if !suggestions.is_empty() {
+        render_suggestions(&suggestions, frame, chunks[3]);
+    }
+
+    render_input(app, frame, chunks[4]);
 }
 
 fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
@@ -237,6 +250,62 @@ fn render_tool_block<'a>(
 
     lines.push(Line::styled("└─", border));
     lines.push(Line::default());
+}
+
+// ---------------------------------------------------------------------------
+// Slash command suggestions
+// ---------------------------------------------------------------------------
+
+/// Returns matching command suggestions if the input starts with `/`.
+fn slash_suggestions(input: &str) -> Vec<(&'static str, &'static [&'static str], &'static str)> {
+    let trimmed = input.trim();
+
+    // Only show suggestions when input starts with `/` and is a single token (no space yet)
+    if !trimmed.starts_with('/') || trimmed.contains(' ') {
+        return Vec::new();
+    }
+
+    commands::matching_commands(trimmed)
+        .into_iter()
+        .map(|cmd| (cmd.name, cmd.aliases, cmd.description))
+        .collect()
+}
+
+fn render_suggestions(
+    suggestions: &[(&str, &[&str], &str)],
+    frame: &mut Frame,
+    area: Rect,
+) {
+    let mut lines: Vec<Line> = Vec::new();
+
+    for (name, aliases, desc) in suggestions {
+        let mut spans = vec![
+            Span::styled("  ", Style::default()),
+            Span::styled(*name, Style::new().fg(Color::Cyan).bold()),
+        ];
+
+        if !aliases.is_empty() {
+            let alias_str = aliases.join(" ");
+            spans.push(Span::styled(
+                format!(" {alias_str}"),
+                Style::new().fg(Color::DarkGray),
+            ));
+        }
+
+        spans.push(Span::styled(
+            format!("  — {desc}"),
+            Style::new().fg(Color::Gray),
+        ));
+
+        lines.push(Line::from(spans));
+    }
+
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::new().fg(Color::DarkGray));
+
+    let widget = Paragraph::new(lines).block(block);
+    frame.render_widget(widget, area);
 }
 
 // ---------------------------------------------------------------------------
