@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -45,7 +46,14 @@ impl SessionBuilder {
             None => std::env::current_dir().context("Failed to determine current directory")?,
         };
 
-        let system_prompt = "You are Claude Code, Anthropic's official CLI for Claude.".to_string();
+        let mut system_prompt =
+            "You are Claude Code, Anthropic's official CLI for Claude.".to_string();
+
+        // Load project instructions (CLAUDE.md, .claude/instructions.md)
+        for instructions in load_project_instructions(&cwd) {
+            system_prompt.push_str("\n\n");
+            system_prompt.push_str(&instructions);
+        }
 
         let git_tool_line = if cfg!(feature = "git") {
             "\n             - **Git**: Git operations (status, diff, log, branch, add, commit, push, reset, checkout) via libgit2. Prefer this over `git` CLI."
@@ -289,4 +297,31 @@ impl<P: PermissionHandler> Session<P> {
 
         results
     }
+}
+
+/// Load project-level instructions from well-known files.
+///
+/// Checks (in order):
+/// 1. `CLAUDE.md` — project root
+/// 2. `.claude/instructions.md` — project-local instructions
+///
+/// Returns contents of all files that exist and are non-empty.
+fn load_project_instructions(cwd: &Path) -> Vec<String> {
+    let candidates = [
+        cwd.join("CLAUDE.md"),
+        cwd.join(".claude").join("instructions.md"),
+    ];
+
+    candidates
+        .iter()
+        .filter_map(|path| {
+            let content = fs::read_to_string(path).ok()?;
+            let trimmed = content.trim();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.to_string())
+            }
+        })
+        .collect()
 }

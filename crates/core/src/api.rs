@@ -10,19 +10,20 @@ use crate::event::EventHandler;
 
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_VERSION: &str = "2023-06-01";
-const MAX_TOKENS: u32 = 16384;
-const MAX_TOKENS_WITH_THINKING: u32 = 32768;
+const MAX_TOKENS: u32 = 64000;
+const MAX_TOKENS_WITH_THINKING: u32 = 128000;
 
 // Conservative limit for request payload size (Anthropic's limit is ~5MB)
 const MAX_REQUEST_SIZE: usize = 4 * 1024 * 1024; // 4 MB
 const MAX_TOOL_RESULT_SIZE: usize = 500_000; // 500 KB per tool result
 
-pub const DEFAULT_MODEL: &str = "claude-sonnet-4-5";
+pub const DEFAULT_MODEL: &str = "claude-sonnet-4-6";
 
 pub const AVAILABLE_MODELS: &[(&str, &str)] = &[
-    ("claude-sonnet-4-5", "Sonnet 4.5"),
+    ("claude-sonnet-4-6", "Sonnet 4.6"),
     ("claude-opus-4-6", "Opus 4.6"),
     ("claude-haiku-4-5", "Haiku 4.5"),
+    ("claude-sonnet-4-5", "Sonnet 4.5"),
 ];
 
 // ---------------------------------------------------------------------------
