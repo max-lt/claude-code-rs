@@ -168,6 +168,9 @@ impl<P: PermissionHandler> Session<P> {
         handler: &mut dyn EventHandler,
         cancel: &CancellationToken,
     ) -> Result<Usage> {
+        // Save message count so we can roll back the entire turn on error.
+        let rollback_len = self.messages.len();
+
         self.messages.push(Message {
             role: "user".to_string(),
             content: Content::text(input),
@@ -206,7 +209,10 @@ impl<P: PermissionHandler> Session<P> {
             let stream_result = match result {
                 Ok(r) => r,
                 Err(e) => {
-                    self.messages.pop(); // rollback
+                    // Roll back all messages added during this turn
+                    // (user message + any assistant/tool_result pairs from
+                    // previous loop iterations).
+                    self.messages.truncate(rollback_len);
                     return Err(e);
                 }
             };
@@ -246,12 +252,30 @@ impl<P: PermissionHandler> Session<P> {
         Ok(total_usage)
     }
 
+    /// Execute tool calls from the assistant response.
+    ///
+    /// Tools that pass their permission check are executed **concurrently**,
+    /// which can significantly reduce latency when the model requests several
+    /// independent tools in a single turn (e.g. Glob + Grep + Read).
     async fn execute_tool_calls(
         &mut self,
         content: &[ContentBlock],
         handler: &mut dyn EventHandler,
     ) -> Vec<ContentBlock> {
-        let mut results = Vec::new();
+        // -----------------------------------------------------------------
+        // Phase 1 (sequential): permission checks, UI events, preparation
+        // -----------------------------------------------------------------
+
+        /// A tool call that passed the permission check and is ready to run.
+        struct PreparedCall<'a> {
+            id: String,
+            name: String,
+            input: serde_json::Value,
+            tool: &'a dyn tools::ToolDefDyn,
+        }
+
+        let mut immediate_results: Vec<ContentBlock> = Vec::new();
+        let mut prepared: Vec<PreparedCall<'_>> = Vec::new();
 
         for block in content {
             let (id, name, input) = match block {
@@ -261,38 +285,72 @@ impl<P: PermissionHandler> Session<P> {
 
             handler.on_tool_use_start(name, id, input);
 
-            // Permission check
+            // Permission check (requires &mut self.permissions)
             let perm_tool = tools::to_permission_tool(name, input);
             let allowed = match &perm_tool {
                 Some(tool) => self.permissions.allow(tool),
                 None => false,
             };
 
-            let result = if !allowed {
-                ContentBlock::ToolResult {
+            if !allowed {
+                handler.on_tool_use_end(name);
+                immediate_results.push(ContentBlock::ToolResult {
                     tool_use_id: id.clone(),
                     content: "Permission denied by user.".to_string(),
                     is_error: Some(true),
+                });
+                continue;
+            }
+
+            handler.on_tool_executing(name, input);
+
+            match self.tools.get(name) {
+                Some(tool) => {
+                    prepared.push(PreparedCall {
+                        id: id.clone(),
+                        name: name.clone(),
+                        input: input.clone(),
+                        tool,
+                    });
                 }
-            } else {
-                handler.on_tool_executing(name, input);
-
-                let output = match self.tools.get(name) {
-                    Some(tool) => tool.execute_dyn(input, &self.cwd).await,
-                    None => tools::ToolOutput::error(format!("Unknown tool: {name}")),
-                };
-
-                handler.on_tool_result(name, &output.content, output.is_error);
-
-                ContentBlock::ToolResult {
-                    tool_use_id: id.clone(),
-                    content: output.content,
-                    is_error: if output.is_error { Some(true) } else { None },
+                None => {
+                    let output = tools::ToolOutput::error(format!("Unknown tool: {name}"));
+                    handler.on_tool_result(name, &output.content, output.is_error);
+                    handler.on_tool_use_end(name);
+                    immediate_results.push(ContentBlock::ToolResult {
+                        tool_use_id: id.clone(),
+                        content: output.content,
+                        is_error: Some(true),
+                    });
                 }
-            };
+            }
+        }
 
-            handler.on_tool_use_end(name);
-            results.push(result);
+        // -----------------------------------------------------------------
+        // Phase 2 (parallel): execute all approved tools concurrently
+        // -----------------------------------------------------------------
+
+        let cwd = &self.cwd;
+        let outputs = futures::future::join_all(
+            prepared
+                .iter()
+                .map(|call| call.tool.execute_dyn(&call.input, cwd)),
+        )
+        .await;
+
+        // -----------------------------------------------------------------
+        // Phase 3 (sequential): collect results, emit UI events
+        // -----------------------------------------------------------------
+
+        let mut results = immediate_results;
+        for (call, output) in prepared.iter().zip(outputs) {
+            handler.on_tool_result(&call.name, &output.content, output.is_error);
+            handler.on_tool_use_end(&call.name);
+            results.push(ContentBlock::ToolResult {
+                tool_use_id: call.id.clone(),
+                content: output.content,
+                is_error: if output.is_error { Some(true) } else { None },
+            });
         }
 
         results
