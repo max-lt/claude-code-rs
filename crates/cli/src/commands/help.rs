@@ -8,7 +8,8 @@ Available commands:
   /help /h   — Show this help message
   /quit /q   — Exit the application
   /clear     — Clear conversation history
-  /model     — List or switch models",
+  /model     — List or switch models
+  /think     — Configure extended thinking (off/adaptive/<budget>)",
     );
 
     #[cfg(feature = "voice")]

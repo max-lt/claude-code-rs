@@ -11,6 +11,7 @@ use crate::event::EventHandler;
 const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_VERSION: &str = "2023-06-01";
 const MAX_TOKENS: u32 = 16384;
+const MAX_TOKENS_WITH_THINKING: u32 = 32768;
 
 // Conservative limit for request payload size (Anthropic's limit is ~5MB)
 const MAX_REQUEST_SIZE: usize = 4 * 1024 * 1024; // 4 MB
@@ -80,6 +81,15 @@ pub enum ContentBlock {
         #[serde(skip_serializing_if = "Option::is_none")]
         is_error: Option<bool>,
     },
+
+    #[serde(rename = "thinking")]
+    Thinking {
+        thinking: String,
+        signature: String,
+    },
+
+    #[serde(rename = "redacted_thinking")]
+    RedactedThinking { data: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +102,8 @@ pub struct Message {
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    pub cache_creation_input_tokens: u64,
+    pub cache_read_input_tokens: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,6 +120,21 @@ pub struct StreamResult {
 }
 
 // ---------------------------------------------------------------------------
+// Thinking configuration
+// ---------------------------------------------------------------------------
+
+/// Controls extended thinking behavior.
+#[derive(Debug, Clone)]
+pub enum ThinkingConfig {
+    /// Model decides when to think (recommended for Opus 4.6).
+    Adaptive,
+    /// Always think with a fixed token budget.
+    Enabled { budget_tokens: u32 },
+    /// No extended thinking.
+    Disabled,
+}
+
+// ---------------------------------------------------------------------------
 // Stream state (tracks the block currently being built)
 // ---------------------------------------------------------------------------
 
@@ -119,6 +146,13 @@ enum BlockKind {
         id: String,
         name: String,
         json: String,
+    },
+    Thinking {
+        thinking: String,
+        signature: String,
+    },
+    RedactedThinking {
+        data: String,
     },
 }
 
@@ -137,6 +171,8 @@ impl StreamState {
             usage: Usage {
                 input_tokens: 0,
                 output_tokens: 0,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
             },
             stop_reason: StopReason::EndTurn,
         }
@@ -164,6 +200,15 @@ impl StreamState {
                     json: String::new(),
                 })
             }
+            "thinking" => Some(BlockKind::Thinking {
+                thinking: String::new(),
+                signature: String::new(),
+            }),
+            "redacted_thinking" => {
+                let block = &parsed["content_block"];
+                let data = block["data"].as_str().unwrap_or("").to_string();
+                Some(BlockKind::RedactedThinking { data })
+            }
             _ => None,
         };
     }
@@ -188,6 +233,17 @@ impl StreamState {
                     json.push_str(chunk);
                 }
             }
+            (Some(BlockKind::Thinking { thinking, .. }), "thinking_delta") => {
+                if let Some(chunk) = delta.get("thinking").and_then(|t| t.as_str()) {
+                    handler.on_thinking(chunk);
+                    thinking.push_str(chunk);
+                }
+            }
+            (Some(BlockKind::Thinking { signature, .. }), "signature_delta") => {
+                if let Some(sig) = delta.get("signature").and_then(|t| t.as_str()) {
+                    signature.push_str(sig);
+                }
+            }
             _ => {}
         }
     }
@@ -206,6 +262,18 @@ impl StreamState {
                 let input = serde_json::from_str(&json)
                     .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
                 self.blocks.push(ContentBlock::ToolUse { id, name, input });
+            }
+            BlockKind::Thinking {
+                thinking,
+                signature,
+            } => {
+                self.blocks.push(ContentBlock::Thinking {
+                    thinking,
+                    signature,
+                });
+            }
+            BlockKind::RedactedThinking { data } => {
+                self.blocks.push(ContentBlock::RedactedThinking { data });
             }
         }
     }
@@ -228,6 +296,8 @@ pub(crate) struct ApiClient {
     access_token: String,
     is_oauth: bool,
     model: String,
+    thinking: ThinkingConfig,
+    temperature: Option<f32>,
 }
 
 impl ApiClient {
@@ -242,6 +312,8 @@ impl ApiClient {
             access_token,
             is_oauth,
             model: DEFAULT_MODEL.to_string(),
+            thinking: ThinkingConfig::Disabled,
+            temperature: None,
         }
     }
 
@@ -251,6 +323,18 @@ impl ApiClient {
 
     pub(crate) fn set_model(&mut self, model: String) {
         self.model = model;
+    }
+
+    pub(crate) fn thinking(&self) -> &ThinkingConfig {
+        &self.thinking
+    }
+
+    pub(crate) fn set_thinking(&mut self, config: ThinkingConfig) {
+        self.thinking = config;
+    }
+
+    pub(crate) fn set_temperature(&mut self, temp: Option<f32>) {
+        self.temperature = temp;
     }
 
     /// Truncate tool results in messages to prevent oversized requests
@@ -307,6 +391,13 @@ impl ApiClient {
         system_prompt: Option<&str>,
         tools: Option<&[serde_json::Value]>,
     ) -> reqwest::RequestBuilder {
+        let thinking_enabled = !matches!(self.thinking, ThinkingConfig::Disabled);
+        let max_tokens = if thinking_enabled {
+            MAX_TOKENS_WITH_THINKING
+        } else {
+            MAX_TOKENS
+        };
+
         let mut req = self
             .client
             .post(API_URL)
@@ -323,10 +414,14 @@ impl ApiClient {
 
         let mut body = serde_json::json!({
             "model": self.model,
-            "max_tokens": MAX_TOKENS,
+            "max_tokens": max_tokens,
             "stream": true,
             "messages": messages,
         });
+
+        // Prompt caching: automatic mode — the API places the cache breakpoint
+        // on the last cacheable block automatically.
+        body["cache_control"] = serde_json::json!({"type": "ephemeral"});
 
         if let Some(prompt) = system_prompt {
             body["system"] = serde_json::json!(prompt);
@@ -336,6 +431,27 @@ impl ApiClient {
             && !tools.is_empty()
         {
             body["tools"] = serde_json::json!(tools);
+        }
+
+        // Extended thinking configuration
+        match &self.thinking {
+            ThinkingConfig::Adaptive => {
+                body["thinking"] = serde_json::json!({"type": "adaptive"});
+            }
+            ThinkingConfig::Enabled { budget_tokens } => {
+                body["thinking"] = serde_json::json!({
+                    "type": "enabled",
+                    "budget_tokens": budget_tokens,
+                });
+            }
+            ThinkingConfig::Disabled => {}
+        }
+
+        // Temperature (not compatible with extended thinking)
+        if !thinking_enabled {
+            if let Some(temp) = self.temperature {
+                body["temperature"] = serde_json::json!(temp);
+            }
         }
 
         req.json(&body)
@@ -352,10 +468,17 @@ impl ApiClient {
         // Truncate tool results to prevent oversized requests
         let truncated_messages = Self::truncate_tool_results(messages);
 
+        let thinking_enabled = !matches!(self.thinking, ThinkingConfig::Disabled);
+        let max_tokens = if thinking_enabled {
+            MAX_TOKENS_WITH_THINKING
+        } else {
+            MAX_TOKENS
+        };
+
         // Build the request body to check its size
         let mut body = serde_json::json!({
             "model": self.model,
-            "max_tokens": MAX_TOKENS,
+            "max_tokens": max_tokens,
             "stream": true,
             "messages": truncated_messages,
         });
@@ -442,10 +565,20 @@ fn handle_sse_event(
         "message_start" => {
             let parsed: serde_json::Value = serde_json::from_str(data)?;
 
-            if let Some(u) = parsed.get("message").and_then(|m| m.get("usage"))
-                && let Some(input) = u.get("input_tokens").and_then(|v| v.as_u64())
-            {
-                state.usage.input_tokens = input;
+            if let Some(u) = parsed.get("message").and_then(|m| m.get("usage")) {
+                if let Some(input) = u.get("input_tokens").and_then(|v| v.as_u64()) {
+                    state.usage.input_tokens = input;
+                }
+                if let Some(cache_create) =
+                    u.get("cache_creation_input_tokens").and_then(|v| v.as_u64())
+                {
+                    state.usage.cache_creation_input_tokens = cache_create;
+                }
+                if let Some(cache_read) =
+                    u.get("cache_read_input_tokens").and_then(|v| v.as_u64())
+                {
+                    state.usage.cache_read_input_tokens = cache_read;
+                }
             }
         }
         "content_block_start" => {

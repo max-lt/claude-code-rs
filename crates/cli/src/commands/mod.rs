@@ -2,8 +2,11 @@ mod clear;
 mod help;
 mod model;
 mod quit;
+mod think;
 #[cfg(feature = "voice")]
 pub mod rec;
+
+use claude_code_core::api::ThinkingConfig;
 
 #[allow(dead_code)]
 pub enum CommandResult {
@@ -14,6 +17,7 @@ pub enum CommandResult {
         id: String,
         label: String,
     },
+    SetThinking(ThinkingConfig),
     Info(String),
     #[cfg(feature = "voice")]
     SendMessage(String),
@@ -33,6 +37,10 @@ pub fn handle_command(input: &str, current_model: &str) -> Option<CommandResult>
         "/model" => {
             let args = input.strip_prefix("/model").unwrap_or("").trim();
             Some(model::run(args, current_model))
+        }
+        "/think" => {
+            let args = input.strip_prefix("/think").unwrap_or("").trim();
+            Some(think::run(args))
         }
         #[cfg(feature = "voice")]
         "/rec" => Some(CommandResult::RecordVoice),

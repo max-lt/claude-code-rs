@@ -44,20 +44,36 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 }
 
 fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
+    let total_input = app.usage.input_tokens
+        + app.usage.cache_creation_input_tokens
+        + app.usage.cache_read_input_tokens;
+
     let tokens = format!(
         "{}↑ {}↓",
-        format_tokens(app.usage.input_tokens),
+        format_tokens(total_input),
         format_tokens(app.usage.output_tokens),
     );
 
-    let bar = Line::from(vec![
+    let mut spans = vec![
         Span::styled(" claude-code-rs", Style::new().bold()),
         Span::raw(" │ "),
         Span::raw(&app.model),
         Span::raw(" │ "),
         Span::raw(tokens),
-    ]);
+    ];
 
+    // Show cache hit rate when caching is active
+    let total_cached = app.usage.cache_creation_input_tokens + app.usage.cache_read_input_tokens;
+    if total_cached > 0 {
+        let cache_info = format!(
+            " │ cache: {}r {}w",
+            format_tokens(app.usage.cache_read_input_tokens),
+            format_tokens(app.usage.cache_creation_input_tokens),
+        );
+        spans.push(Span::styled(cache_info, Style::new().fg(Color::Green)));
+    }
+
+    let bar = Line::from(spans);
     let widget = Paragraph::new(bar).style(Style::new().bg(Color::DarkGray).fg(Color::White));
     frame.render_widget(widget, area);
 }
@@ -78,6 +94,42 @@ fn render_messages(app: &mut App, frame: &mut Frame, area: Rect) {
             DisplayMessage::AssistantText(text) => {
                 let markdown_lines = render_markdown(text);
                 lines.extend(markdown_lines);
+            }
+
+            DisplayMessage::Thinking(text) => {
+                let border = Style::new().fg(Color::DarkGray);
+                let thinking_style = Style::new().fg(Color::Magenta).italic();
+
+                lines.push(Line::from(vec![
+                    Span::styled("┌ ", border),
+                    Span::styled("Thinking", Style::new().fg(Color::Magenta).bold()),
+                    Span::styled(" ─".to_string() + &"─".repeat(20), border),
+                ]));
+
+                // Show up to 10 lines of thinking
+                const MAX_THINKING_LINES: usize = 10;
+                let thinking_lines: Vec<&str> = text.lines().collect();
+                let total = thinking_lines.len();
+
+                for line in thinking_lines.iter().take(MAX_THINKING_LINES) {
+                    lines.push(Line::from(vec![
+                        Span::styled("│ ", border),
+                        Span::styled((*line).to_string(), thinking_style),
+                    ]));
+                }
+
+                if total > MAX_THINKING_LINES {
+                    lines.push(Line::from(vec![
+                        Span::styled("│ ", border),
+                        Span::styled(
+                            format!("... ({total} lines total)"),
+                            Style::new().fg(Color::DarkGray).italic(),
+                        ),
+                    ]));
+                }
+
+                lines.push(Line::styled("└─", border));
+                lines.push(Line::default());
             }
 
             DisplayMessage::ToolUse {

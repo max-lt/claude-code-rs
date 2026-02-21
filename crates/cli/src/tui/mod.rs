@@ -39,6 +39,7 @@ pub struct PendingPermission {
 pub enum DisplayMessage {
     User(String),
     AssistantText(String),
+    Thinking(String),
     ToolUse {
         name: String,
         input: Option<serde_json::Value>,
@@ -86,6 +87,8 @@ impl App {
             usage: Usage {
                 input_tokens: 0,
                 output_tokens: 0,
+                cache_creation_input_tokens: 0,
+                cache_read_input_tokens: 0,
             },
             messages: vec![DisplayMessage::Info(
                 "Type your message to start. Ctrl+C to exit.".to_string(),
@@ -243,6 +246,24 @@ impl App {
                         .push(DisplayMessage::Info(format!("Switched to {label}.")));
                 }
 
+                CommandResult::SetThinking(config) => {
+                    let label = match &config {
+                        claude_code_core::api::ThinkingConfig::Disabled => {
+                            "disabled".to_string()
+                        }
+                        claude_code_core::api::ThinkingConfig::Adaptive => {
+                            "adaptive".to_string()
+                        }
+                        claude_code_core::api::ThinkingConfig::Enabled { budget_tokens } => {
+                            format!("enabled (budget: {budget_tokens} tokens)")
+                        }
+                    };
+                    let _ = self.session_tx.send(SessionCmd::SetThinking(config));
+                    self.messages.push(DisplayMessage::Info(format!(
+                        "Extended thinking: {label}."
+                    )));
+                }
+
                 CommandResult::Info(info) => {
                     self.messages.push(DisplayMessage::Info(info));
                 }
@@ -293,6 +314,14 @@ impl App {
                 }
             }
 
+            UiEvent::Thinking(text) => {
+                if let Some(DisplayMessage::Thinking(existing)) = self.messages.last_mut() {
+                    existing.push_str(&text);
+                } else {
+                    self.messages.push(DisplayMessage::Thinking(text));
+                }
+            }
+
             UiEvent::Error(msg) => {
                 self.messages.push(DisplayMessage::Error(msg));
             }
@@ -329,6 +358,8 @@ impl App {
             UiEvent::Done(usage) => {
                 self.usage.input_tokens += usage.input_tokens;
                 self.usage.output_tokens += usage.output_tokens;
+                self.usage.cache_creation_input_tokens += usage.cache_creation_input_tokens;
+                self.usage.cache_read_input_tokens += usage.cache_read_input_tokens;
                 self.state = AppState::Idle;
             }
 
@@ -405,6 +436,10 @@ async fn session_loop(
 
             SessionCmd::SetModel(id) => {
                 session.set_model(id);
+            }
+
+            SessionCmd::SetThinking(config) => {
+                session.set_thinking(config);
             }
 
             SessionCmd::Clear => {

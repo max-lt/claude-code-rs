@@ -8,6 +8,7 @@ use claude_code_core::event::EventHandler;
 /// Events sent from the session task to the UI.
 pub enum UiEvent {
     Text(String),
+    Thinking(String),
     Error(String),
     ToolStart {
         name: String,
@@ -33,6 +34,7 @@ pub enum UiEvent {
 pub enum SessionCmd {
     SendMessage(String),
     SetModel(String),
+    SetThinking(claude_code_core::api::ThinkingConfig),
     Clear,
     Stop,
 }
@@ -45,6 +47,10 @@ pub struct ChannelEventHandler {
 impl EventHandler for ChannelEventHandler {
     fn on_text(&mut self, text: &str) {
         let _ = self.tx.send(UiEvent::Text(text.to_string()));
+    }
+
+    fn on_thinking(&mut self, text: &str) {
+        let _ = self.tx.send(UiEvent::Thinking(text.to_string()));
     }
 
     fn on_error(&mut self, message: &str) {

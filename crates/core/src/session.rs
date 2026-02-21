@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use tokio_util::sync::CancellationToken;
 
-use crate::api::{ApiClient, Content, ContentBlock, Message, StopReason, Usage};
+use crate::api::{ApiClient, Content, ContentBlock, Message, StopReason, ThinkingConfig, Usage};
 use crate::event::EventHandler;
 use crate::permission::{AllowAll, PermissionHandler};
 use crate::tools::{self, ToolRegistry};
@@ -142,6 +142,18 @@ impl<P: PermissionHandler> Session<P> {
         self.client.set_model(model);
     }
 
+    pub fn thinking(&self) -> &ThinkingConfig {
+        self.client.thinking()
+    }
+
+    pub fn set_thinking(&mut self, config: ThinkingConfig) {
+        self.client.set_thinking(config);
+    }
+
+    pub fn set_temperature(&mut self, temp: Option<f32>) {
+        self.client.set_temperature(temp);
+    }
+
     pub async fn send_message(
         &mut self,
         input: &str,
@@ -163,6 +175,8 @@ impl<P: PermissionHandler> Session<P> {
         let mut total_usage = Usage {
             input_tokens: 0,
             output_tokens: 0,
+            cache_creation_input_tokens: 0,
+            cache_read_input_tokens: 0,
         };
 
         loop {
@@ -191,6 +205,9 @@ impl<P: PermissionHandler> Session<P> {
 
             total_usage.input_tokens += stream_result.usage.input_tokens;
             total_usage.output_tokens += stream_result.usage.output_tokens;
+            total_usage.cache_creation_input_tokens +=
+                stream_result.usage.cache_creation_input_tokens;
+            total_usage.cache_read_input_tokens += stream_result.usage.cache_read_input_tokens;
 
             // Push assistant message with all content blocks
             self.messages.push(Message {
