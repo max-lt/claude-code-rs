@@ -63,6 +63,10 @@ async fn get_access_token(creds: &Credentials) -> Result<(String, bool, Option<C
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Load .env from the working directory upwards. Absent file is not an
+    // error: the keys may already be exported.
+    let _ = dotenvy::dotenv();
+
     let cli = Cli::parse();
 
     println!("claude-code-rs v0.1.0\n");

@@ -2,6 +2,8 @@ pub mod api;
 pub mod auth;
 pub mod config;
 pub mod event;
+pub mod openai;
 pub mod permission;
+pub mod provider;
 pub mod session;
 pub mod tools;

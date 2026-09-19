@@ -7,22 +7,14 @@ use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
 use crate::event::EventHandler;
+use crate::openai;
+use crate::provider::Provider;
 
-const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_VERSION: &str = "2023-06-01";
-const MAX_TOKENS: u32 = 16384;
 
-// Conservative limit for request payload size (Anthropic's limit is ~5MB)
-const MAX_REQUEST_SIZE: usize = 4 * 1024 * 1024; // 4 MB
-const MAX_TOOL_RESULT_SIZE: usize = 500_000; // 500 KB per tool result
+const CEREBRAS_KEY_VAR: &str = "CEREBRAS_API_KEY";
 
-pub const DEFAULT_MODEL: &str = "claude-sonnet-4-5";
-
-pub const AVAILABLE_MODELS: &[(&str, &str)] = &[
-    ("claude-sonnet-4-5", "Sonnet 4.5"),
-    ("claude-opus-4-6", "Opus 4.6"),
-    ("claude-haiku-4-5", "Haiku 4.5"),
-];
+pub use crate::provider::{AVAILABLE_MODELS, DEFAULT_MODEL};
 
 // ---------------------------------------------------------------------------
 // Content model
@@ -253,8 +245,12 @@ impl ApiClient {
         self.model = model;
     }
 
+    pub(crate) fn provider(&self) -> Provider {
+        Provider::for_model(&self.model)
+    }
+
     /// Truncate tool results in messages to prevent oversized requests
-    fn truncate_tool_results(messages: &[Message]) -> Vec<Message> {
+    fn truncate_tool_results(messages: &[Message], limit: usize) -> Vec<Message> {
         messages
             .iter()
             .map(|msg| {
@@ -268,11 +264,17 @@ impl ApiClient {
                                     content,
                                     is_error,
                                 } => {
-                                    if content.len() > MAX_TOOL_RESULT_SIZE {
+                                    if content.len() > limit {
+                                        // Never split a UTF-8 sequence.
+                                        let mut end = limit;
+                                        while end > 0 && !content.is_char_boundary(end) {
+                                            end -= 1;
+                                        }
+
                                         let truncated = format!(
                                             "{}... [truncated {} bytes]",
-                                            &content[..MAX_TOOL_RESULT_SIZE],
-                                            content.len() - MAX_TOOL_RESULT_SIZE
+                                            &content[..end],
+                                            content.len() - end
                                         );
 
                                         ContentBlock::ToolResult {
@@ -301,29 +303,28 @@ impl ApiClient {
             .collect()
     }
 
-    fn build_request(
+    /// Serialize the request body in the provider's own format.
+    fn build_body(
         &self,
         messages: &[Message],
         system_prompt: Option<&str>,
         tools: Option<&[serde_json::Value]>,
-    ) -> reqwest::RequestBuilder {
-        let mut req = self
-            .client
-            .post(API_URL)
-            .header("anthropic-version", API_VERSION)
-            .header("content-type", "application/json");
+    ) -> serde_json::Value {
+        let provider = self.provider();
 
-        if self.is_oauth {
-            req = req
-                .header("authorization", format!("Bearer {}", self.access_token))
-                .header("anthropic-beta", "oauth-2025-04-20");
-        } else {
-            req = req.header("x-api-key", &self.access_token);
+        if provider == Provider::Cerebras {
+            return openai::build_body(
+                &self.model,
+                messages,
+                system_prompt,
+                tools,
+                provider.max_output_tokens(),
+            );
         }
 
         let mut body = serde_json::json!({
             "model": self.model,
-            "max_tokens": MAX_TOKENS,
+            "max_tokens": provider.max_output_tokens(),
             "stream": true,
             "messages": messages,
         });
@@ -338,7 +339,44 @@ impl ApiClient {
             body["tools"] = serde_json::json!(tools);
         }
 
-        req.json(&body)
+        body
+    }
+
+    /// Apply the provider's endpoint and authentication.
+    fn build_request(&self, body: &serde_json::Value) -> Result<reqwest::RequestBuilder> {
+        let provider = self.provider();
+
+        let mut req = self
+            .client
+            .post(provider.endpoint())
+            .header("content-type", "application/json");
+
+        match provider {
+            Provider::Anthropic => {
+                req = req.header("anthropic-version", API_VERSION);
+
+                if self.is_oauth {
+                    req = req
+                        .header("authorization", format!("Bearer {}", self.access_token))
+                        .header("anthropic-beta", "oauth-2025-04-20");
+                } else {
+                    req = req.header("x-api-key", &self.access_token);
+                }
+            }
+            Provider::Cerebras => {
+                let key = std::env::var(CEREBRAS_KEY_VAR).map_err(|_| {
+                    anyhow::anyhow!(
+                        "{CEREBRAS_KEY_VAR} is not set. Add it to .env or export it \
+                         to use {}.",
+                        self.model
+                    )
+                })?;
+
+                req = req.header("authorization", format!("Bearer {key}"));
+            }
+        }
+
+        Ok(req.json(body))
     }
 
     pub(crate) async fn stream_message(
@@ -349,43 +387,33 @@ impl ApiClient {
         handler: &mut dyn EventHandler,
         cancel: &CancellationToken,
     ) -> Result<StreamResult> {
+        let provider = self.provider();
+
         // Truncate tool results to prevent oversized requests
-        let truncated_messages = Self::truncate_tool_results(messages);
+        let truncated_messages =
+            Self::truncate_tool_results(messages, provider.max_tool_result_bytes());
 
-        // Build the request body to check its size
-        let mut body = serde_json::json!({
-            "model": self.model,
-            "max_tokens": MAX_TOKENS,
-            "stream": true,
-            "messages": truncated_messages,
-        });
-
-        if let Some(prompt) = system_prompt {
-            body["system"] = serde_json::json!(prompt);
-        }
-
-        if let Some(tools) = tools
-            && !tools.is_empty()
-        {
-            body["tools"] = serde_json::json!(tools);
-        }
+        let body = self.build_body(&truncated_messages, system_prompt, tools);
 
         // Check request size
-        let body_json = serde_json::to_string(&body)?;
-        let body_size = body_json.len();
+        let body_size = serde_json::to_string(&body)?.len();
+        let limit = provider.max_request_bytes();
 
-        if body_size > MAX_REQUEST_SIZE {
+        if body_size > limit {
             anyhow::bail!(
-                "Request too large ({} MB). The conversation history is too long. \
-                 Please use /clear to start a new conversation.",
-                body_size / (1024 * 1024)
+                "Request too large ({} KB, limit {} KB for {}). The conversation \
+                 history is too long. Please use /clear to start a new conversation.",
+                body_size / 1024,
+                limit / 1024,
+                self.model,
             );
         }
 
-        let request = self.build_request(&truncated_messages, system_prompt, tools);
+        let request = self.build_request(&body)?;
         let mut es = EventSource::new(request).context("Failed to create event source")?;
 
         let mut state = StreamState::new();
+        let mut chunks = openai::Accumulator::default();
 
         loop {
             tokio::select! {
@@ -395,7 +423,14 @@ impl ApiClient {
                     match event {
                         Ok(Event::Open) => {}
                         Ok(Event::Message(msg)) => {
-                            let done = handle_sse_event(&msg.event, &msg.data, &mut state, handler)?;
+                            // Cerebras sends unnamed events carrying one chat
+                            // completion chunk each; Anthropic names them.
+                            let done = match provider {
+                                Provider::Anthropic => {
+                                    handle_sse_event(&msg.event, &msg.data, &mut state, handler)?
+                                }
+                                Provider::Cerebras => chunks.handle_chunk(&msg.data, handler)?,
+                            };
 
                             if done {
                                 es.close();
@@ -428,7 +463,10 @@ impl ApiClient {
             }
         }
 
-        Ok(state.into_result())
+        Ok(match provider {
+            Provider::Anthropic => state.into_result(),
+            Provider::Cerebras => chunks.into_result(),
+        })
     }
 }
 
@@ -504,9 +542,139 @@ fn handle_sse_event(
 mod tests {
     use super::*;
 
+    const TEST_LIMIT: usize = 500_000;
+
+    /// The Anthropic body must keep its original shape: a top-level `system`,
+    /// raw tool definitions, and `max_tokens`.
+    #[test]
+    fn anthropic_body_is_unchanged_by_provider_routing() {
+        let client = ApiClient::new("token".to_string(), true);
+        assert_eq!(client.provider(), Provider::Anthropic);
+
+        let messages = vec![Message {
+            role: "user".to_string(),
+            content: Content::text("hi"),
+        }];
+
+        let tools = vec![serde_json::json!({
+            "name": "Read",
+            "description": "Read a file",
+            "input_schema": { "type": "object" },
+        })];
+
+        let body = client.build_body(&messages, Some("be brief"), Some(&tools));
+
+        assert_eq!(body["model"], DEFAULT_MODEL);
+        assert_eq!(body["max_tokens"], 16384);
+        assert_eq!(body["stream"], true);
+        assert_eq!(body["system"], "be brief");
+        assert_eq!(body["messages"][0]["content"], "hi");
+
+        // Anthropic takes the tool definitions as-is.
+        assert_eq!(body["tools"][0]["name"], "Read");
+        assert_eq!(body["tools"][0]["input_schema"]["type"], "object");
+        assert!(body.get("max_completion_tokens").is_none());
+    }
+
+    #[test]
+    fn switching_model_switches_the_wire_format() {
+        let mut client = ApiClient::new("token".to_string(), true);
+        client.set_model("qwen-3.8-27b".to_string());
+
+        let body = client.build_body(&[], Some("be brief"), None);
+
+        assert_eq!(body["max_completion_tokens"], 8192);
+        assert_eq!(body["messages"][0]["role"], "system");
+        assert!(body.get("system").is_none());
+        assert!(body.get("max_tokens").is_none());
+    }
+
+    /// One real round-trip against Cerebras, covering the whole path: body
+    /// translation, HTTP, SSE chunks, and accumulation back into blocks.
+    ///
+    /// Needs `CEREBRAS_API_KEY`. Run with:
+    /// `cargo test -p claude-code-core --lib -- --ignored cerebras`
+    #[tokio::test]
+    #[ignore = "calls the live Cerebras API"]
+    async fn cerebras_round_trip_produces_a_tool_use_block() {
+        #[derive(Default)]
+        struct Collect {
+            text: String,
+            thinking: String,
+            error: Option<String>,
+        }
+
+        impl EventHandler for Collect {
+            fn on_text(&mut self, text: &str) {
+                self.text.push_str(text);
+            }
+
+            fn on_thinking(&mut self, text: &str) {
+                self.thinking.push_str(text);
+            }
+
+            fn on_error(&mut self, message: &str) {
+                self.error = Some(message.to_string());
+            }
+        }
+
+        let mut client = ApiClient::new(String::new(), false);
+        client.set_model("qwen-3.8-27b".to_string());
+        assert_eq!(client.provider(), Provider::Cerebras);
+
+        let messages = vec![Message {
+            role: "user".to_string(),
+            content: Content::text("List the files in /tmp. Use the Bash tool."),
+        }];
+
+        let tools = vec![serde_json::json!({
+            "name": "Bash",
+            "description": "Run a shell command",
+            "input_schema": {
+                "type": "object",
+                "properties": { "command": { "type": "string" } },
+                "required": ["command"],
+            },
+        })];
+
+        let mut handler = Collect::default();
+
+        let result = client
+            .stream_message(
+                &messages,
+                Some("You are a terminal assistant."),
+                Some(&tools),
+                &mut handler,
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("stream failed");
+
+        assert_eq!(handler.error, None);
+        assert_eq!(result.stop_reason, StopReason::ToolUse);
+        assert!(result.usage.input_tokens > 0, "no input tokens reported");
+        assert!(result.usage.output_tokens > 0, "no output tokens reported");
+
+        let call = result
+            .content
+            .iter()
+            .find_map(|b| match b {
+                ContentBlock::ToolUse { name, input, .. } => Some((name, input)),
+                _ => None,
+            })
+            .expect("no tool_use block in the response");
+
+        assert_eq!(call.0, "Bash");
+        assert!(
+            call.1.get("command").and_then(|c| c.as_str()).is_some(),
+            "tool input did not parse into an object with a command: {:?}",
+            call.1
+        );
+    }
+
     #[test]
     fn test_truncate_tool_results() {
-        let large_content = "x".repeat(MAX_TOOL_RESULT_SIZE + 1000);
+        let large_content = "x".repeat(TEST_LIMIT + 1000);
 
         let messages = vec![Message {
             role: "user".to_string(),
@@ -517,12 +685,39 @@ mod tests {
             }]),
         }];
 
-        let truncated = ApiClient::truncate_tool_results(&messages);
+        let truncated = ApiClient::truncate_tool_results(&messages, TEST_LIMIT);
 
         match &truncated[0].content {
             Content::Blocks(blocks) => match &blocks[0] {
                 ContentBlock::ToolResult { content, .. } => {
                     assert!(content.len() < large_content.len());
+                    assert!(content.contains("[truncated"));
+                }
+                _ => panic!("Expected ToolResult"),
+            },
+            _ => panic!("Expected Blocks"),
+        }
+    }
+
+    #[test]
+    fn truncation_never_splits_a_utf8_sequence() {
+        // A 3-byte character straddling the cut point.
+        let messages = vec![Message {
+            role: "user".to_string(),
+            content: Content::Blocks(vec![ContentBlock::ToolResult {
+                tool_use_id: "t".to_string(),
+                content: "é".repeat(200),
+                is_error: None,
+            }]),
+        }];
+
+        // The limit lands mid-character: 5 is inside the third 'é'.
+        let truncated = ApiClient::truncate_tool_results(&messages, 5);
+
+        match &truncated[0].content {
+            Content::Blocks(blocks) => match &blocks[0] {
+                ContentBlock::ToolResult { content, .. } => {
+                    assert!(content.starts_with("éé"));
                     assert!(content.contains("[truncated"));
                 }
                 _ => panic!("Expected ToolResult"),
