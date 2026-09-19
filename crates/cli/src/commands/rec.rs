@@ -47,13 +47,13 @@ fn record_audio() -> Result<(Vec<f32>, u32)> {
     let samples: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
     let samples_clone = Arc::clone(&samples);
 
-    let err_fn = |err: cpal::StreamError| {
+    let err_fn = |err: cpal::Error| {
         eprintln!("Stream error: {err}");
     };
 
     let stream = match sample_format {
         SampleFormat::F32 => device.build_input_stream(
-            &config.into(),
+            config.into(),
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
                 let mono = to_mono(data, channels);
                 samples_clone.lock().unwrap().extend_from_slice(&mono);
@@ -64,7 +64,7 @@ fn record_audio() -> Result<(Vec<f32>, u32)> {
         SampleFormat::I16 => {
             let samples_clone = Arc::clone(&samples);
             device.build_input_stream(
-                &config.into(),
+                config.into(),
                 move |data: &[i16], _: &cpal::InputCallbackInfo| {
                     let floats: Vec<f32> =
                         data.iter().map(|&s| s as f32 / i16::MAX as f32).collect();

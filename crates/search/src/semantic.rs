@@ -4,7 +4,7 @@
 //! Embeddings are computed lazily on the first `search()` call.
 
 use anyhow::{Context, Result};
-use fastembed::{EmbeddingModel, InitOptions, TextEmbedding};
+use fastembed::{EmbeddingModel, TextEmbedding, TextInitOptions};
 
 use crate::walk::FileChange;
 
@@ -140,7 +140,7 @@ impl SemanticIndex {
             std::fs::create_dir_all(&cache_dir)
                 .context("failed to create model cache directory")?;
 
-            let mut options = InitOptions::default();
+            let mut options = TextInitOptions::default();
             options.model_name = EmbeddingModel::AllMiniLML6V2;
             options.cache_dir = cache_dir;
             options.show_download_progress = true;

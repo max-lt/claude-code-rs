@@ -25,6 +25,6 @@ crossterm = "0.29"
 clap = { version = "4", features = ["derive"] }
 webbrowser = "1"
 reqwest = { version = "0.12", default-features = false, features = ["multipart", "rustls-tls"] }
-cpal = { version = "0.17", optional = true }
+cpal = { version = "0.18", optional = true }
 hound = { version = "3.5", optional = true }
 pulldown-cmark = "0.13"
