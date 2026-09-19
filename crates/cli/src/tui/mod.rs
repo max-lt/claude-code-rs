@@ -121,9 +121,11 @@ impl App {
         }
 
         // Esc: stop Claude if busy, do nothing if idle
-        if key.code == KeyCode::Esc && self.state == AppState::Busy {
-            let _ = self.session_tx.send(SessionCmd::Stop);
-            return false;
+        if key.code == KeyCode::Esc {
+            if self.state == AppState::Busy {
+                let _ = self.session_tx.send(SessionCmd::Stop);
+                return false;
+            }
         }
 
         // Permission prompt captures y/n
@@ -261,9 +263,6 @@ impl App {
 
                 #[cfg(feature = "voice")]
                 CommandResult::RecordVoice => {
-                    self.messages.push(DisplayMessage::Info(
-                        "Entering voice recording mode...".to_string(),
-                    ));
                     self.pending_voice_recording = true;
                     return false;
                 }
@@ -468,8 +467,9 @@ pub fn run(
         if app.pending_voice_recording {
             app.pending_voice_recording = false;
 
-            // Exit TUI temporarily - rec::run() handles terminal state
+            // Exit TUI temporarily
             drop(terminal);
+            crossterm::terminal::disable_raw_mode()?;
 
             // Run voice recording (async, blocks until done)
             let rec_result = tokio::task::block_in_place(|| {

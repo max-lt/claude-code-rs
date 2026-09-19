@@ -4,7 +4,6 @@ use std::sync::{Arc, Mutex};
 use anyhow::{Result, anyhow};
 use cpal::SampleFormat;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-
 use super::CommandResult;
 
 /// Run voice recording outside of TUI raw mode.
