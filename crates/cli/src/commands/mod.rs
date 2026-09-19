@@ -1,3 +1,4 @@
+mod bash;
 mod clear;
 mod help;
 mod model;
@@ -81,9 +82,14 @@ pub fn matching_commands(prefix: &str) -> Vec<&'static CommandDef> {
         .collect()
 }
 
-/// Try to handle input as a slash command.
+/// Try to handle input as a slash command or bash command.
 /// Returns `None` if the input is not a command.
 pub fn handle_command(input: &str, current_model: &str) -> Option<CommandResult> {
+    // Handle bash commands starting with !
+    if let Some(bash_cmd) = input.strip_prefix('!') {
+        return Some(bash::run(bash_cmd));
+    }
+
     let cmd = input.split_whitespace().next()?;
 
     match cmd {

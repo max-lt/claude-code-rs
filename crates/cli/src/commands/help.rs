@@ -8,7 +8,8 @@ Available commands:
   /help /h   — Show this help message
   /quit /q   — Exit the application
   /clear     — Clear conversation history
-  /model     — List or switch models",
+  /model     — List or switch models
+  !<command> — Execute a bash command (e.g., !ls, !git status)",
     );
 
     #[cfg(feature = "voice")]
