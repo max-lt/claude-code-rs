@@ -15,6 +15,7 @@ A lightweight reimplementation of [Claude Code](https://github.com/anthropics/cl
 - **Interactive permissions** — colored prompts with rule-based auto-allow
 - **Smart Git integration** — read-only commands (status, log, diff) auto-approved, write operations require permission
 - **Settings compatibility** — reads `.claude/settings.json` and `.claude/settings.local.json` (same format as Claude Code)
+- **Two providers** — Anthropic, and Cerebras for open-weights models
 - **OAuth PKCE** — same auth flow as the official CLI, with refresh token rotation
 - **API key authentication**
 - **Streaming responses** via SSE
@@ -46,6 +47,31 @@ Then type your messages at the `>` prompt. Claude streams responses and uses too
 | `/model` | | List available models |
 | `/model <name>` | | Switch model (e.g. `/model opus`) |
 | `/rec` | | Record and transcribe voice input (requires `MISTRAL_API_KEY`) |
+
+### Models
+
+`/model <name>` selects the model. The provider follows from the model id.
+
+| Model | Provider | Context | Credential |
+|-------|----------|---------|------------|
+| `claude-sonnet-4-5` | Anthropic | 200k | OAuth or API key |
+| `claude-opus-4-6` | Anthropic | 200k | OAuth or API key |
+| `claude-haiku-4-5` | Anthropic | 200k | OAuth or API key |
+| `qwen-3.8-27b` | Cerebras | 64k | `CEREBRAS_API_KEY` |
+| `gpt-oss-120b` | Cerebras | 65k | `CEREBRAS_API_KEY` |
+
+Cerebras context figures are for the free tier. The paid tier gives twice as much.
+
+To use a Cerebras model, put the key in `.env` at the project root:
+
+```
+CEREBRAS_API_KEY=csk-...
+```
+
+`ccrs` reads `.env` at startup. An exported variable takes priority.
+
+Cerebras speaks the OpenAI chat completions format. `ccrs` translates each
+request and each response stream. Tool calling works on both providers.
 
 ### Voice Input
 
@@ -110,4 +136,7 @@ crates/
 
 ## Credentials
 
-Stored in `~/.config/claude-code-rs/credentials.json` (mode `0600`). Delete to re-authenticate.
+Anthropic credentials go in `~/.config/claude-code-rs/credentials.json` (mode `0600`).
+Delete the file to re-authenticate.
+
+Provider keys come from the environment or from `.env`. Keep `.env` out of git.

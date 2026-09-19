@@ -102,6 +102,16 @@ fn render_messages(app: &mut App, frame: &mut Frame, area: Rect) {
                 render_tool_block(&mut lines, name, input, output, *is_error, &app.cwd);
             }
 
+            DisplayMessage::Thinking(text) => {
+                for line in text.lines() {
+                    lines.push(Line::styled(
+                        line.to_string(),
+                        Style::new().fg(Color::DarkGray).italic(),
+                    ));
+                }
+                lines.push(Line::default());
+            }
+
             DisplayMessage::Error(text) => {
                 lines.push(Line::styled(
                     format!("Error: {text}"),

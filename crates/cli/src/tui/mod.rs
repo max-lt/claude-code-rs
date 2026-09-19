@@ -39,6 +39,7 @@ pub struct PendingPermission {
 pub enum DisplayMessage {
     User(String),
     AssistantText(String),
+    Thinking(String),
     ToolUse {
         name: String,
         input: Option<serde_json::Value>,
@@ -289,6 +290,14 @@ impl App {
                     existing.push_str(&text);
                 } else {
                     self.messages.push(DisplayMessage::AssistantText(text));
+                }
+            }
+
+            UiEvent::Thinking(text) => {
+                if let Some(DisplayMessage::Thinking(existing)) = self.messages.last_mut() {
+                    existing.push_str(&text);
+                } else {
+                    self.messages.push(DisplayMessage::Thinking(text));
                 }
             }
 

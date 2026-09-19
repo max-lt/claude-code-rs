@@ -3,9 +3,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use tokio_util::sync::CancellationToken;
 
-use crate::api::{ApiClient, Content, ContentBlock, Message, StopReason, Usage};
+use crate::api::{ApiClient, Content, ContentBlock, DEFAULT_MODEL, Message, StopReason, Usage};
 use crate::event::EventHandler;
 use crate::permission::{AllowAll, PermissionHandler};
+use crate::provider::Provider;
 use crate::tools::{self, ToolRegistry};
 
 pub struct Session<P: PermissionHandler> {
@@ -45,7 +46,7 @@ impl SessionBuilder {
             None => std::env::current_dir().context("Failed to determine current directory")?,
         };
 
-        let system_prompt = "You are Claude Code, Anthropic's official CLI for Claude.".to_string();
+        let system_prompt = Provider::for_model(DEFAULT_MODEL).identity().to_string();
 
         let git_tool_line = if cfg!(feature = "git") {
             "\n             - **Git**: Git operations (status, diff, log, branch, add, commit, push, reset, checkout) via libgit2. Prefer this over `git` CLI."
@@ -140,6 +141,8 @@ impl<P: PermissionHandler> Session<P> {
 
     pub fn set_model(&mut self, model: String) {
         self.client.set_model(model);
+        // The identity line names the vendor, so it follows the model.
+        self.system_prompt = self.client.provider().identity().to_string();
     }
 
     pub async fn send_message(
