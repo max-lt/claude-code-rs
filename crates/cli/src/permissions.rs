@@ -15,6 +15,7 @@ pub struct ChannelPermissions {
     config: PermissionConfig,
     project_dir: PathBuf,
     ui_tx: mpsc::UnboundedSender<UiEvent>,
+    auto: bool,
 }
 
 impl ChannelPermissions {
@@ -27,15 +28,27 @@ impl ChannelPermissions {
             config,
             project_dir,
             ui_tx,
+            auto: false,
         }
+    }
+
+    /// Disable all permission prompts: every tool is allowed.
+    pub fn with_auto(mut self, auto: bool) -> Self {
+        self.auto = auto;
+        self
     }
 }
 
 impl PermissionHandler for ChannelPermissions {
     fn allow(&mut self, tool: &Tool<'_>) -> bool {
-        // Check rule-based config first
+        // Rule-based config takes priority (may deny)
         if let Some(allowed) = self.config.check(tool, &self.project_dir) {
             return allowed;
+        }
+
+        // --auto: allow without prompting
+        if self.auto {
+            return true;
         }
 
         // No matching rule — ask the UI

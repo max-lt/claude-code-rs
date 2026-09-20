@@ -18,6 +18,10 @@ struct Cli {
     /// Force re-login, ignoring saved credentials
     #[arg(long)]
     login: bool,
+
+    /// Auto-approve all tool permissions (no prompts)
+    #[arg(long)]
+    auto: bool,
 }
 
 async fn login() -> Result<Credentials> {
@@ -94,7 +98,8 @@ async fn main() -> Result<()> {
     let settings = config::load_settings(&cwd);
 
     let (ui_tx, ui_rx) = tokio::sync::mpsc::unbounded_channel();
-    let perms = ChannelPermissions::new(settings.permissions, cwd.clone(), ui_tx.clone());
+    let perms = ChannelPermissions::new(settings.permissions, cwd.clone(), ui_tx.clone())
+        .with_auto(cli.auto);
 
     let session = SessionBuilder::new(access_token, is_oauth).permissions(perms)?;
 
