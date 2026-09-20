@@ -177,6 +177,14 @@ impl App {
                 }
             }
 
+            KeyCode::Tab => {
+                // Complete the first matching slash command
+                if let Some(name) = first_suggestion(&self.input) {
+                    self.input = format!("{name} ");
+                    self.cursor = self.input.chars().count();
+                }
+            }
+
             KeyCode::Left => {
                 self.cursor = self.cursor.saturating_sub(1);
             }
@@ -356,6 +364,20 @@ impl App {
             }
         }
     }
+}
+
+/// First matching slash command for the current input, if any.
+/// Mirrors the filter used to render the suggestion list.
+fn first_suggestion(input: &str) -> Option<&'static str> {
+    let trimmed = input.trim();
+
+    if !trimmed.starts_with('/') || trimmed.contains(' ') {
+        return None;
+    }
+
+    commands::matching_commands(trimmed)
+        .first()
+        .map(|cmd| cmd.name)
 }
 
 // ---------------------------------------------------------------------------
