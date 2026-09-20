@@ -6,7 +6,7 @@ use tokio_util::sync::CancellationToken;
 use crate::api::{ApiClient, Content, ContentBlock, DEFAULT_MODEL, Message, StopReason, Usage};
 use crate::event::EventHandler;
 use crate::permission::{AllowAll, PermissionHandler};
-use crate::provider::Provider;
+use crate::provider::{context_window_for, Provider};
 use crate::tools::{self, ToolRegistry};
 
 pub struct Session<P: PermissionHandler> {
@@ -150,7 +150,7 @@ impl<P: PermissionHandler> Session<P> {
         input: &str,
         handler: &mut dyn EventHandler,
         cancel: &CancellationToken,
-    ) -> Result<Usage> {
+    ) -> Result<(Usage, u64)> {
         self.messages.push(Message {
             role: "user".to_string(),
             content: Content::text(input),
@@ -221,7 +221,7 @@ impl<P: PermissionHandler> Session<P> {
             });
         }
 
-        Ok(total_usage)
+        Ok((total_usage, context_window_for(self.model())))
     }
 
     async fn execute_tool_calls(

@@ -23,7 +23,11 @@ pub enum UiEvent {
         is_error: bool,
     },
     ToolEnd,
-    Done(Usage),
+    /// Turn finished: usage for this turn, and the model's context window.
+    Done {
+        usage: Usage,
+        context_window: u64,
+    },
     Failed(String),
     PermissionRequest {
         description: String,

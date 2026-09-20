@@ -15,6 +15,8 @@ pub struct ModelInfo {
     pub id: &'static str,
     pub label: &'static str,
     pub provider: Provider,
+    /// Total context window of the model, in tokens.
+    pub context_window: u64,
 }
 
 pub const DEFAULT_MODEL: &str = "claude-sonnet-4-5";
@@ -24,28 +26,43 @@ pub const AVAILABLE_MODELS: &[ModelInfo] = &[
         id: "claude-sonnet-4-5",
         label: "Sonnet 4.5",
         provider: Provider::Anthropic,
+        context_window: 200_000,
     },
     ModelInfo {
         id: "claude-opus-4-6",
         label: "Opus 4.6",
         provider: Provider::Anthropic,
+        context_window: 200_000,
     },
     ModelInfo {
         id: "claude-haiku-4-5",
         label: "Haiku 4.5",
         provider: Provider::Anthropic,
+        context_window: 200_000,
     },
     ModelInfo {
         id: "qwen-3.8-27b",
         label: "Qwen 3.8 27B (Cerebras)",
         provider: Provider::Cerebras,
+        context_window: 64_000,
     },
     ModelInfo {
         id: "gpt-oss-120b",
         label: "GPT-OSS 120B (Cerebras)",
         provider: Provider::Cerebras,
+        context_window: 131_072,
     },
 ];
+
+/// Context window for a model id, falling back to an Anthropic default for
+/// ids not in [`AVAILABLE_MODELS`].
+pub fn context_window_for(model: &str) -> u64 {
+    AVAILABLE_MODELS
+        .iter()
+        .find(|m| m.id == model)
+        .map(|m| m.context_window)
+        .unwrap_or(200_000)
+}
 
 impl Provider {
     /// Resolve the provider for a model id.

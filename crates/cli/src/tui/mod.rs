@@ -14,6 +14,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use claude_code_core::api::Usage;
+use claude_code_core::provider::context_window_for;
 use claude_code_core::session::Session;
 
 use crate::commands::{self, CommandResult};
@@ -58,6 +59,9 @@ pub struct App {
     pub cwd: PathBuf,
     pub model: String,
     pub usage: Usage,
+    pub context_window: u64,
+    /// Input tokens of the last API call — the current context size.
+    pub context_used: u64,
     pub messages: Vec<DisplayMessage>,
     pub scroll: u16,
     pub auto_scroll: bool,
@@ -81,6 +85,8 @@ impl App {
         ui_rx: mpsc::UnboundedReceiver<UiEvent>,
         session_tx: mpsc::UnboundedSender<SessionCmd>,
     ) -> Self {
+        let context_window = context_window_for(&model);
+
         Self {
             cwd,
             model,
@@ -88,6 +94,8 @@ impl App {
                 input_tokens: 0,
                 output_tokens: 0,
             },
+            context_window,
+            context_used: 0,
             messages: vec![DisplayMessage::Info(
                 "Type your message to start. Ctrl+C to exit.".to_string(),
             )],
@@ -248,8 +256,9 @@ impl App {
                 }
 
                 CommandResult::SetModel { id, label } => {
-                    let _ = self.session_tx.send(SessionCmd::SetModel(id.clone()));
+                    self.context_window = context_window_for(&id);
                     self.model = id;
+                    let _ = self.session_tx.send(SessionCmd::SetModel(self.model.clone()));
                     self.messages
                         .push(DisplayMessage::Info(format!("Switched to {label}.")));
                 }
@@ -342,9 +351,14 @@ impl App {
 
             UiEvent::ToolEnd => {}
 
-            UiEvent::Done(usage) => {
+            UiEvent::Done {
+                usage,
+                context_window,
+            } => {
                 self.usage.input_tokens += usage.input_tokens;
                 self.usage.output_tokens += usage.output_tokens;
+                self.context_window = context_window;
+                self.context_used = usage.input_tokens;
                 self.state = AppState::Idle;
             }
 
@@ -414,8 +428,11 @@ async fn session_loop(
                 };
 
                 match result {
-                    Ok(usage) => {
-                        let _ = ui_tx.send(UiEvent::Done(usage));
+                    Ok((usage, context_window)) => {
+                        let _ = ui_tx.send(UiEvent::Done {
+                            usage,
+                            context_window,
+                        });
                     }
                     Err(e) => {
                         let msg = e.to_string();

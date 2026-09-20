@@ -63,12 +63,30 @@ fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
         format_tokens(app.usage.output_tokens),
     );
 
+    let ctx_pct = app
+        .context_used
+        .saturating_mul(100)
+        .checked_div(app.context_window)
+        .unwrap_or(0);
+
+    let ctx_style = if ctx_pct >= 95 {
+        Style::new().fg(Color::Red).bold()
+    } else if ctx_pct >= 80 {
+        Style::new().fg(Color::Yellow).bold()
+    } else {
+        Style::new()
+    };
+
+    let ctx = format!("ctx {}% ({})", ctx_pct, format_tokens(app.context_window));
+
     let bar = Line::from(vec![
         Span::styled(" claude-code-rs", Style::new().bold()),
         Span::raw(" │ "),
         Span::raw(&app.model),
         Span::raw(" │ "),
         Span::raw(tokens),
+        Span::raw(" │ "),
+        Span::styled(ctx, ctx_style),
     ]);
 
     let widget = Paragraph::new(bar).style(Style::new().bg(Color::DarkGray).fg(Color::White));
