@@ -23,10 +23,10 @@ pub enum UiEvent {
         is_error: bool,
     },
     ToolEnd,
-    /// Turn finished: usage for this turn, and the model's context window.
+    /// Turn finished: tokens billed, and the conversation size it left behind.
     Done {
         usage: Usage,
-        context_window: u64,
+        context_used: u64,
     },
     Failed(String),
     PermissionRequest {

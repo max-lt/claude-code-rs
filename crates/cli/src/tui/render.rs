@@ -63,11 +63,7 @@ fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
         format_tokens(app.usage.output_tokens),
     );
 
-    let ctx_pct = app
-        .context_used
-        .saturating_mul(100)
-        .checked_div(app.context_window)
-        .unwrap_or(0);
+    let ctx_pct = (app.context_used.saturating_mul(100) / app.context_window.max(1)).min(100);
 
     let ctx_style = if ctx_pct >= 95 {
         Style::new().fg(Color::Red).bold()

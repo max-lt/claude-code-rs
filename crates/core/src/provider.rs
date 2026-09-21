@@ -15,7 +15,8 @@ pub struct ModelInfo {
     pub id: &'static str,
     pub label: &'static str,
     pub provider: Provider,
-    /// Total context window of the model, in tokens.
+    /// Total context window, in tokens. Cerebras figures are the free tier;
+    /// the paid tier doubles them.
     pub context_window: u64,
 }
 
@@ -50,18 +51,18 @@ pub const AVAILABLE_MODELS: &[ModelInfo] = &[
         id: "gpt-oss-120b",
         label: "GPT-OSS 120B (Cerebras)",
         provider: Provider::Cerebras,
-        context_window: 131_072,
+        context_window: 65_536,
     },
 ];
 
-/// Context window for a model id, falling back to an Anthropic default for
-/// ids not in [`AVAILABLE_MODELS`].
+/// Context window for a model id. An id not in [`AVAILABLE_MODELS`] falls back
+/// to its provider's default, matching how [`Provider::for_model`] routes it.
 pub fn context_window_for(model: &str) -> u64 {
     AVAILABLE_MODELS
         .iter()
         .find(|m| m.id == model)
         .map(|m| m.context_window)
-        .unwrap_or(200_000)
+        .unwrap_or_else(|| Provider::for_model(model).default_context_window())
 }
 
 impl Provider {
@@ -85,6 +86,14 @@ impl Provider {
         match self {
             Self::Anthropic => "https://api.anthropic.com/v1/messages",
             Self::Cerebras => "https://api.cerebras.ai/v1/chat/completions",
+        }
+    }
+
+    /// Context window assumed for a model this build does not list.
+    pub fn default_context_window(self) -> u64 {
+        match self {
+            Self::Anthropic => 200_000,
+            Self::Cerebras => 64_000,
         }
     }
 
@@ -154,6 +163,40 @@ mod tests {
     fn every_listed_model_routes_to_its_own_provider() {
         for m in AVAILABLE_MODELS {
             assert_eq!(Provider::for_model(m.id), m.provider, "{}", m.id);
+        }
+    }
+
+    #[test]
+    fn context_window_comes_from_the_table() {
+        assert_eq!(context_window_for("claude-sonnet-4-5"), 200_000);
+        assert_eq!(context_window_for("qwen-3.8-27b"), 64_000);
+    }
+
+    #[test]
+    fn unknown_model_falls_back_to_its_own_provider() {
+        // A Cerebras id must not inherit the Anthropic window.
+        assert_eq!(context_window_for("qwen-4-next"), 64_000);
+        assert_eq!(context_window_for("claude-opus-9"), 200_000);
+    }
+
+    #[test]
+    fn cerebras_windows_all_assume_the_free_tier() {
+        for m in AVAILABLE_MODELS {
+            if m.provider == Provider::Cerebras {
+                assert!(
+                    m.context_window <= 65_536,
+                    "{} claims a paid-tier window",
+                    m.id
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_context_window_is_zero() {
+        // render.rs divides by this value.
+        for m in AVAILABLE_MODELS {
+            assert!(m.context_window > 0, "{}", m.id);
         }
     }
 

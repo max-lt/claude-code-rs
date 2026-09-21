@@ -60,7 +60,7 @@ pub struct App {
     pub model: String,
     pub usage: Usage,
     pub context_window: u64,
-    /// Input tokens of the last API call — the current context size.
+    /// Conversation size after the last turn, in tokens.
     pub context_used: u64,
     pub messages: Vec<DisplayMessage>,
     pub scroll: u16,
@@ -257,8 +257,8 @@ impl App {
 
                 CommandResult::SetModel { id, label } => {
                     self.context_window = context_window_for(&id);
+                    let _ = self.session_tx.send(SessionCmd::SetModel(id.clone()));
                     self.model = id;
-                    let _ = self.session_tx.send(SessionCmd::SetModel(self.model.clone()));
                     self.messages
                         .push(DisplayMessage::Info(format!("Switched to {label}.")));
                 }
@@ -353,12 +353,11 @@ impl App {
 
             UiEvent::Done {
                 usage,
-                context_window,
+                context_used,
             } => {
                 self.usage.input_tokens += usage.input_tokens;
                 self.usage.output_tokens += usage.output_tokens;
-                self.context_window = context_window;
-                self.context_used = usage.input_tokens;
+                self.context_used = context_used;
                 self.state = AppState::Idle;
             }
 
@@ -428,10 +427,10 @@ async fn session_loop(
                 };
 
                 match result {
-                    Ok((usage, context_window)) => {
+                    Ok(summary) => {
                         let _ = ui_tx.send(UiEvent::Done {
-                            usage,
-                            context_window,
+                            usage: summary.usage,
+                            context_used: summary.context_used,
                         });
                     }
                     Err(e) => {

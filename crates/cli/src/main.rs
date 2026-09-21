@@ -19,7 +19,7 @@ struct Cli {
     #[arg(long)]
     login: bool,
 
-    /// Auto-approve all tool permissions (no prompts)
+    /// Approve tools without prompting. Deny rules still apply.
     #[arg(long)]
     auto: bool,
 }

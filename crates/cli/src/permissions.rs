@@ -32,7 +32,8 @@ impl ChannelPermissions {
         }
     }
 
-    /// Disable all permission prompts: every tool is allowed.
+    /// Allow any tool that no config rule covers, instead of prompting.
+    /// A `deny` rule still blocks.
     pub fn with_auto(mut self, auto: bool) -> Self {
         self.auto = auto;
         self

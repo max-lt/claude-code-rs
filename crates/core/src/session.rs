@@ -6,8 +6,17 @@ use tokio_util::sync::CancellationToken;
 use crate::api::{ApiClient, Content, ContentBlock, DEFAULT_MODEL, Message, StopReason, Usage};
 use crate::event::EventHandler;
 use crate::permission::{AllowAll, PermissionHandler};
-use crate::provider::{context_window_for, Provider};
+use crate::provider::Provider;
 use crate::tools::{self, ToolRegistry};
+
+/// What one [`Session::send_message`] turn consumed.
+pub struct TurnSummary {
+    /// Tokens billed across every API call of the turn.
+    pub usage: Usage,
+    /// Size of the conversation after the turn: the last prompt plus the reply
+    /// appended to it. Compare against the model's context window.
+    pub context_used: u64,
+}
 
 pub struct Session<P: PermissionHandler> {
     client: ApiClient,
@@ -150,7 +159,7 @@ impl<P: PermissionHandler> Session<P> {
         input: &str,
         handler: &mut dyn EventHandler,
         cancel: &CancellationToken,
-    ) -> Result<(Usage, u64)> {
+    ) -> Result<TurnSummary> {
         self.messages.push(Message {
             role: "user".to_string(),
             content: Content::text(input),
@@ -167,6 +176,11 @@ impl<P: PermissionHandler> Session<P> {
             input_tokens: 0,
             output_tokens: 0,
         };
+
+        // Every call resends the whole history, so each `input_tokens` is an
+        // absolute prompt size, not an increment. Summing them would count the
+        // history once per tool call; keep the last one instead.
+        let mut context_used = 0;
 
         loop {
             if cancel.is_cancelled() {
@@ -195,6 +209,9 @@ impl<P: PermissionHandler> Session<P> {
             total_usage.input_tokens += stream_result.usage.input_tokens;
             total_usage.output_tokens += stream_result.usage.output_tokens;
 
+            // The reply below is appended to the history, so it counts too.
+            context_used = stream_result.usage.input_tokens + stream_result.usage.output_tokens;
+
             // Push assistant message with all content blocks
             self.messages.push(Message {
                 role: "assistant".to_string(),
@@ -221,7 +238,10 @@ impl<P: PermissionHandler> Session<P> {
             });
         }
 
-        Ok((total_usage, context_window_for(self.model())))
+        Ok(TurnSummary {
+            usage: total_usage,
+            context_used,
+        })
     }
 
     async fn execute_tool_calls(
