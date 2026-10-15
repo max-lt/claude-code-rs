@@ -9,6 +9,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use super::markdown::render_markdown;
 use super::{App, AppState, DisplayMessage};
 use crate::commands;
+use claude_code_core::api::{AVAILABLE_MODELS, DEFAULT_MODEL};
 
 /// Render the entire UI.
 pub fn render(app: &mut App, frame: &mut Frame) {
@@ -16,7 +17,9 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 
     let has_perm = app.pending_perm.is_some();
     let suggestions = slash_suggestions(&app.input);
-    let suggestion_height = if suggestions.is_empty() {
+    let suggestion_height = if app.model_picker.is_some() {
+        (AVAILABLE_MODELS.len() as u16) + 2 // top border + hint line
+    } else if suggestions.is_empty() {
         0u16
     } else {
         (suggestions.len() as u16) + 1 // +1 for the top border
@@ -49,7 +52,9 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         render_permission(app, frame, chunks[2]);
     }
 
-    if !suggestions.is_empty() {
+    if let Some(selected) = app.model_picker {
+        render_model_picker(selected, &app.model, frame, chunks[3]);
+    } else if !suggestions.is_empty() {
         render_suggestions(&suggestions, frame, chunks[3]);
     }
 
@@ -330,6 +335,52 @@ fn render_suggestions(
 
     let widget = Paragraph::new(lines).block(block);
     frame.render_widget(widget, area);
+}
+
+// ---------------------------------------------------------------------------
+// Model picker
+// ---------------------------------------------------------------------------
+
+fn render_model_picker(selected: usize, current: &str, frame: &mut Frame, area: Rect) {
+    let mut lines: Vec<Line> = Vec::new();
+
+    for (i, model) in AVAILABLE_MODELS.iter().enumerate() {
+        let is_selected = i == selected;
+
+        let pointer = if is_selected { "❯ " } else { "  " };
+        let name_style = if is_selected {
+            Style::new().fg(Color::Cyan).bold()
+        } else {
+            Style::new().fg(Color::White)
+        };
+
+        let mut spans = vec![
+            Span::styled(pointer, Style::new().fg(Color::Cyan).bold()),
+            Span::styled(model.label, name_style),
+            Span::styled(format!("  {}", model.id), Style::new().fg(Color::DarkGray)),
+        ];
+
+        if model.id == DEFAULT_MODEL {
+            spans.push(Span::styled(" [default]", Style::new().fg(Color::DarkGray)));
+        }
+        if model.id == current {
+            spans.push(Span::styled(" ✓", Style::new().fg(Color::Green).bold()));
+        }
+
+        lines.push(Line::from(spans));
+    }
+
+    lines.push(Line::styled(
+        "  ↑/↓ navigate · Enter select · Esc cancel",
+        Style::new().fg(Color::DarkGray).italic(),
+    ));
+
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::new().fg(Color::Cyan))
+        .title(" Select model ");
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 // ---------------------------------------------------------------------------

@@ -15,6 +15,8 @@ pub enum CommandResult {
         id: String,
         label: String,
     },
+    /// Open the interactive model picker.
+    PickModel,
     Info(String),
     #[cfg(feature = "voice")]
     SendMessage(String),
@@ -50,7 +52,7 @@ pub fn available_commands() -> Vec<CommandDef> {
         CommandDef {
             name: "/model",
             aliases: &[],
-            description: "List or switch models",
+            description: "Pick a model (or /model <name>)",
         },
     ];
 

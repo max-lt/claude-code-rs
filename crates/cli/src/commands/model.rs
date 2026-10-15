@@ -6,7 +6,7 @@ pub fn run(args: &str, current_model: &str) -> CommandResult {
     let requested = args.trim();
 
     if requested.is_empty() {
-        return CommandResult::Info(list_models(current_model));
+        return CommandResult::PickModel;
     }
 
     // Try exact match first, then substring match

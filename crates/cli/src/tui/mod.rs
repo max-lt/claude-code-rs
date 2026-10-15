@@ -13,7 +13,7 @@ use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use claude_code_core::api::Usage;
+use claude_code_core::api::{AVAILABLE_MODELS, Usage};
 use claude_code_core::provider::context_window_for;
 use claude_code_core::session::Session;
 
@@ -70,6 +70,8 @@ pub struct App {
     pub cursor: usize,
     pub state: AppState,
     pub pending_perm: Option<PendingPermission>,
+    /// Index into `AVAILABLE_MODELS` while the model picker is open.
+    pub model_picker: Option<usize>,
     pub spinner_frame: usize,
     pub last_spinner_update: Instant,
     #[cfg(feature = "voice")]
@@ -106,6 +108,7 @@ impl App {
             cursor: 0,
             state: AppState::Idle,
             pending_perm: None,
+            model_picker: None,
             spinner_frame: 0,
             last_spinner_update: Instant::now(),
             #[cfg(feature = "voice")]
@@ -140,6 +143,12 @@ impl App {
         // Permission prompt captures y/n
         if self.pending_perm.is_some() {
             return self.handle_perm_key(key.code);
+        }
+
+        // Model picker captures navigation keys
+        if self.model_picker.is_some() {
+            self.handle_picker_key(key.code);
+            return false;
         }
 
         match key.code {
@@ -238,6 +247,39 @@ impl App {
         false
     }
 
+    fn handle_picker_key(&mut self, code: KeyCode) {
+        let Some(selected) = self.model_picker else {
+            return;
+        };
+        let count = AVAILABLE_MODELS.len();
+
+        match code {
+            KeyCode::Up => {
+                self.model_picker = Some((selected + count - 1) % count);
+            }
+            KeyCode::Down | KeyCode::Tab => {
+                self.model_picker = Some((selected + 1) % count);
+            }
+            KeyCode::Enter => {
+                self.model_picker = None;
+                let info = &AVAILABLE_MODELS[selected];
+                self.set_model(info.id.to_string(), info.label.to_string());
+            }
+            KeyCode::Esc => {
+                self.model_picker = None;
+            }
+            _ => {}
+        }
+    }
+
+    fn set_model(&mut self, id: String, label: String) {
+        self.context_window = context_window_for(&id);
+        let _ = self.session_tx.send(SessionCmd::SetModel(id.clone()));
+        self.model = id;
+        self.messages
+            .push(DisplayMessage::Info(format!("Switched to {label}.")));
+    }
+
     /// Process input: slash command or message. Returns `true` to quit.
     fn submit_input(&mut self) -> bool {
         let text = std::mem::take(&mut self.input);
@@ -256,11 +298,16 @@ impl App {
                 }
 
                 CommandResult::SetModel { id, label } => {
-                    self.context_window = context_window_for(&id);
-                    let _ = self.session_tx.send(SessionCmd::SetModel(id.clone()));
-                    self.model = id;
-                    self.messages
-                        .push(DisplayMessage::Info(format!("Switched to {label}.")));
+                    self.set_model(id, label);
+                }
+
+                CommandResult::PickModel => {
+                    // Start on the active model
+                    let current = AVAILABLE_MODELS
+                        .iter()
+                        .position(|m| m.id == self.model)
+                        .unwrap_or(0);
+                    self.model_picker = Some(current);
                 }
 
                 CommandResult::Info(info) => {

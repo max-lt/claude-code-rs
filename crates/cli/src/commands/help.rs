@@ -8,7 +8,7 @@ Available commands:
   /help /h   — Show this help message
   /quit /q   — Exit the application
   /clear     — Clear conversation history
-  /model     — List or switch models
+  /model     — Pick a model with ↑/↓ (or /model <name>)
   !<command> — Execute a bash command (e.g., !ls, !git status)",
     );
 

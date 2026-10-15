@@ -44,7 +44,7 @@ Then type your messages at the `>` prompt. Claude streams responses and uses too
 | `/help` | `/h` | Show available commands |
 | `/quit` | `/q` `/exit` | Exit |
 | `/clear` | | Clear conversation history |
-| `/model` | | List available models |
+| `/model` | | Pick a model with ↑/↓, Enter to confirm, Esc to cancel |
 | `/model <name>` | | Switch model (e.g. `/model opus`) |
 | `/rec` | | Record and transcribe voice input (requires `MISTRAL_API_KEY`) |
 
