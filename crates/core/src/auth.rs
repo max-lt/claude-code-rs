@@ -18,6 +18,12 @@ struct PkceChallenge {
     state: String,
 }
 
+/// S256 code challenge for a PKCE verifier (RFC 7636 §4.2).
+fn pkce_challenge(verifier: &str) -> String {
+    let digest = Sha256::digest(verifier.as_bytes());
+    URL_SAFE_NO_PAD.encode(digest)
+}
+
 fn generate_pkce() -> PkceChallenge {
     let mut rng = rand::rng();
 
@@ -27,9 +33,7 @@ fn generate_pkce() -> PkceChallenge {
     let verifier = URL_SAFE_NO_PAD.encode(verifier_bytes);
 
     // Challenge: SHA-256 of verifier → base64url
-    let mut hasher = Sha256::new();
-    hasher.update(verifier.as_bytes());
-    let challenge = URL_SAFE_NO_PAD.encode(hasher.finalize());
+    let challenge = pkce_challenge(&verifier);
 
     // State: 16 random bytes → hex (reference uses .toString('hex'))
     let mut state_bytes = [0u8; 16];
@@ -222,4 +226,25 @@ pub async fn refresh_access_token(creds: &Credentials) -> Result<(String, Creden
     };
 
     Ok((token_resp.access_token, updated_creds))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pkce_challenge_matches_rfc_7636_appendix_b() {
+        assert_eq!(
+            pkce_challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+        );
+    }
+
+    #[test]
+    fn generated_pkce_is_self_consistent() {
+        let p = generate_pkce();
+        assert_eq!(p.challenge, pkce_challenge(&p.verifier));
+        assert_eq!(p.verifier.len(), 43);
+        assert_eq!(p.state.len(), 32);
+    }
 }
