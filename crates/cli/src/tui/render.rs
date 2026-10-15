@@ -25,25 +25,17 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         (suggestions.len() as u16) + 1 // +1 for the top border
     };
 
-    let chunks = if has_perm {
-        Layout::vertical([
-            Constraint::Length(1),                  // status bar
-            Constraint::Min(1),                     // messages
-            Constraint::Length(2),                   // permission prompt
-            Constraint::Length(suggestion_height),   // command suggestions
-            Constraint::Length(3),                   // input area
-        ])
-        .split(area)
-    } else {
-        Layout::vertical([
-            Constraint::Length(1),                  // status bar
-            Constraint::Min(1),                     // messages
-            Constraint::Length(0),                   // no permission prompt
-            Constraint::Length(suggestion_height),   // command suggestions
-            Constraint::Length(3),                   // input area
-        ])
-        .split(area)
-    };
+    let queue_height = queue_panel_height(app);
+
+    let chunks = Layout::vertical([
+        Constraint::Length(1),                                  // status bar
+        Constraint::Min(1),                                     // messages
+        Constraint::Length(if has_perm { 2 } else { 0 }),       // permission prompt
+        Constraint::Length(queue_height),                       // queued messages
+        Constraint::Length(suggestion_height),                  // command suggestions
+        Constraint::Length(3),                                  // input area
+    ])
+    .split(area);
 
     render_status_bar(app, frame, chunks[0]);
     render_messages(app, frame, chunks[1]);
@@ -52,13 +44,71 @@ pub fn render(app: &mut App, frame: &mut Frame) {
         render_permission(app, frame, chunks[2]);
     }
 
-    if let Some(selected) = app.model_picker {
-        render_model_picker(app, selected, frame, chunks[3]);
-    } else if !suggestions.is_empty() {
-        render_suggestions(&suggestions, frame, chunks[3]);
+    if queue_height > 0 {
+        render_queue(app, frame, chunks[3]);
     }
 
-    render_input(app, frame, chunks[4]);
+    if let Some(selected) = app.model_picker {
+        render_model_picker(app, selected, frame, chunks[4]);
+    } else if !suggestions.is_empty() {
+        render_suggestions(&suggestions, frame, chunks[4]);
+    }
+
+    render_input(app, frame, chunks[5]);
+}
+
+/// Most queued messages shown at once; older ones collapse into a summary line.
+const MAX_QUEUE_ROWS: usize = 5;
+
+/// Rows taken by the queue panel: one per shown message, plus a summary line
+/// when some are hidden. Zero when there is nothing to show.
+fn queue_panel_height(app: &App) -> u16 {
+    if app.queue.is_empty() {
+        return 0;
+    }
+    let shown = app.queue.len().min(MAX_QUEUE_ROWS);
+    let summary = usize::from(app.queue.len() > shown);
+    (shown + summary) as u16
+}
+
+/// Cut `text` to `max` characters, ending with an ellipsis when it was longer.
+fn truncate_chars(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let kept: String = text.chars().take(max.saturating_sub(1)).collect();
+    format!("{kept}…")
+}
+
+/// The messages waiting for the current turn to end, oldest first. When there
+/// are more than fit, the newest are shown (those are the ones Backspace pops)
+/// under a summary of how many are hidden.
+fn render_queue(app: &App, frame: &mut Frame, area: Rect) {
+    let hidden = app.queue.len().saturating_sub(MAX_QUEUE_ROWS);
+    let dim = Style::new().fg(Color::DarkGray);
+    let mut lines: Vec<Line> = Vec::new();
+
+    if hidden > 0 {
+        lines.push(Line::from(Span::styled(
+            format!("  … {hidden} earlier queued"),
+            dim,
+        )));
+    }
+
+    // Marker (2) + indent: keep the text inside the panel width.
+    let width = (area.width as usize).saturating_sub(4);
+
+    for text in app.queue.iter().skip(hidden) {
+        lines.push(Line::from(vec![
+            Span::styled("  ❯ ", dim),
+            Span::styled(
+                truncate_chars(text, width),
+                Style::new().fg(Color::Gray).italic(),
+            ),
+        ]));
+    }
+
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
@@ -640,48 +690,25 @@ fn str_field<'a>(input: &'a serde_json::Value, key: &str) -> &'a str {
 fn render_input(app: &App, frame: &mut Frame, area: Rect) {
     const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-    // Text shown to the left of the user's live input, plus whether the live
-    // input belongs in this line at all.
-    let (prefix, show_input) = if app.state == AppState::Busy {
-        let frame_char = SPINNER[app.spinner_frame % SPINNER.len()];
-
-        if app.input.is_empty() && !app.queue.is_empty() {
-            // Nothing in the input yet: preview what runs next so the user
-            // can see, and edit (Backspace pops it back out).
-            let last = app.queue.back().map(String::as_str).unwrap_or("");
-            (
-                format!("{frame_char} [{last} (queued {})] ", app.queue.len()),
-                false,
-            )
-        } else {
-            (format!("{frame_char} "), true)
-        }
+    // Queued messages are listed above the input (see `render_queue`), so the
+    // input line itself only carries the prompt and what is being typed.
+    let prefix = if app.state == AppState::Busy {
+        format!("{} ", SPINNER[app.spinner_frame % SPINNER.len()])
     } else {
-        ("> ".to_string(), true)
-    };
-
-    let prompt = if show_input {
-        format!("{prefix}{}", app.input)
-    } else {
-        prefix.clone()
+        "> ".to_string()
     };
 
     let block = Block::default()
         .borders(Borders::TOP)
         .border_style(Style::new().fg(Color::DarkGray));
 
-    let input_widget = Paragraph::new(prompt).block(block);
+    let input_widget = Paragraph::new(format!("{prefix}{}", app.input)).block(block);
     frame.render_widget(input_widget, area);
 
-    // The cursor tracks the live input, which starts right after the prefix.
-    // A preview (queue) has no editable text, so park the cursor at the end.
-    if show_input {
-        let prefix_width = Line::from(prefix.clone()).width() as u16;
-        let cursor_x = area.x + prefix_width + app.cursor as u16;
-        frame.set_cursor_position((cursor_x, area.y + 1));
-    } else {
-        frame.set_cursor_position((area.x + Line::from(prefix).width() as u16, area.y + 1));
-    }
+    // The live input starts right after the prefix.
+    let prefix_width = Line::from(prefix).width() as u16;
+    let cursor_x = area.x + prefix_width + app.cursor as u16;
+    frame.set_cursor_position((cursor_x, area.y + 1));
 }
 
 fn format_tokens(n: u64) -> String {

@@ -1149,6 +1149,59 @@ mod tests {
         assert_eq!(app.input, "next");
     }
 
+    /// The screen as text, one string per row.
+    fn screen(app: &mut App, width: u16, height: u16) -> Vec<String> {
+        let mut terminal =
+            ratatui::Terminal::new(ratatui::backend::TestBackend::new(width, height)).unwrap();
+        terminal.draw(|f| render::render(app, f)).unwrap();
+        let buf = terminal.backend().buffer().clone();
+        (0..height)
+            .map(|y| (0..width).map(|x| buf[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn queue_is_listed_above_the_input() {
+        let (mut app, _rx) = busy_app();
+        app.queue.extend(["first".to_string(), "second".to_string()]);
+        app.input = "typing".to_string();
+
+        let rows = screen(&mut app, 40, 20);
+        let first = rows.iter().position(|r| r.contains("❯ first")).unwrap();
+        let second = rows.iter().position(|r| r.contains("❯ second")).unwrap();
+        let input = rows.iter().position(|r| r.contains("typing")).unwrap();
+
+        assert_eq!(second, first + 1);
+        assert!(input > second);
+    }
+
+    #[test]
+    fn long_queue_collapses_oldest_entries() {
+        let (mut app, _rx) = busy_app();
+        app.queue.extend((1..=8).map(|n| format!("msg{n}")));
+
+        let rows = screen(&mut app, 40, 20).join("\n");
+        assert!(rows.contains("… 3 earlier queued"));
+        assert!(!rows.contains("msg3"));
+        assert!(rows.contains("msg4") && rows.contains("msg8"));
+    }
+
+    #[test]
+    fn long_queued_line_is_truncated() {
+        let (mut app, _rx) = busy_app();
+        app.queue.push_back("x".repeat(100));
+
+        let rows = screen(&mut app, 40, 20);
+        let row = rows.iter().find(|r| r.contains("❯")).unwrap();
+        assert!(row.contains('…'));
+    }
+
+    #[test]
+    fn no_queue_no_panel() {
+        let (mut app, _rx) = busy_app();
+        assert!(!screen(&mut app, 40, 20).join("\n").contains("❯"));
+    }
+
     // `/model` probes LM Studio with `tokio::spawn`, so this needs a runtime.
     #[tokio::test]
     async fn queued_model_picker_pauses_the_queue() {
