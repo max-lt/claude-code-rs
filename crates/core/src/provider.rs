@@ -9,6 +9,37 @@ pub enum Provider {
     Anthropic,
     /// Cerebras, via its OpenAI-compatible chat completions endpoint.
     Cerebras,
+    /// A local LM Studio server, also OpenAI-compatible. Its model ids are
+    /// free-form, so they are marked with [`LM_STUDIO_PREFIX`] internally.
+    LmStudio,
+}
+
+/// Internal marker for a model served by LM Studio. LM Studio ids are
+/// arbitrary (`qwen3.8-27b-obliterated`, `google/gemma-4-12b-qat`), so prefix
+/// matching on the bare id would misroute them. The marker is stripped before
+/// the id goes on the wire, see [`wire_model`].
+pub const LM_STUDIO_PREFIX: &str = "lmstudio:";
+
+/// Default address of the LM Studio local server.
+pub const LM_STUDIO_DEFAULT_URL: &str = "http://localhost:1234";
+
+/// Base URL of the LM Studio server. `LMSTUDIO_BASE_URL` overrides the default.
+pub fn lm_studio_base_url() -> String {
+    std::env::var("LMSTUDIO_BASE_URL")
+        .ok()
+        .map(|url| url.trim().trim_end_matches('/').to_string())
+        .filter(|url| !url.is_empty())
+        .unwrap_or_else(|| LM_STUDIO_DEFAULT_URL.to_string())
+}
+
+/// The internal id for a model name reported by LM Studio.
+pub fn lm_studio_model_id(name: &str) -> String {
+    format!("{LM_STUDIO_PREFIX}{name}")
+}
+
+/// The model name to send to the backend: the internal marker is dropped.
+pub fn wire_model(model: &str) -> &str {
+    model.strip_prefix(LM_STUDIO_PREFIX).unwrap_or(model)
 }
 
 pub struct ModelInfo {
@@ -75,6 +106,10 @@ impl Provider {
             return info.provider;
         }
 
+        if model.starts_with(LM_STUDIO_PREFIX) {
+            return Self::LmStudio;
+        }
+
         if model.starts_with("qwen") || model.starts_with("gpt-oss") {
             return Self::Cerebras;
         }
@@ -82,11 +117,17 @@ impl Provider {
         Self::Anthropic
     }
 
-    pub fn endpoint(self) -> &'static str {
+    pub fn endpoint(self) -> String {
         match self {
-            Self::Anthropic => "https://api.anthropic.com/v1/messages",
-            Self::Cerebras => "https://api.cerebras.ai/v1/chat/completions",
+            Self::Anthropic => "https://api.anthropic.com/v1/messages".to_string(),
+            Self::Cerebras => "https://api.cerebras.ai/v1/chat/completions".to_string(),
+            Self::LmStudio => format!("{}/v1/chat/completions", lm_studio_base_url()),
         }
+    }
+
+    /// Whether the backend speaks the OpenAI chat completions wire format.
+    pub fn is_openai_compatible(self) -> bool {
+        matches!(self, Self::Cerebras | Self::LmStudio)
     }
 
     /// Context window assumed for a model this build does not list.
@@ -94,6 +135,9 @@ impl Provider {
         match self {
             Self::Anthropic => 200_000,
             Self::Cerebras => 64_000,
+            // The real window depends on how the model was loaded; LM Studio
+            // defaults to a few thousand tokens. This is a middle estimate.
+            Self::LmStudio => 32_768,
         }
     }
 
@@ -104,6 +148,7 @@ impl Provider {
             // The free tier gives a 64k context. A large output cap would eat
             // it, so keep the reply short and leave room for the history.
             Self::Cerebras => 8192,
+            Self::LmStudio => 4096,
         }
     }
 
@@ -114,6 +159,7 @@ impl Provider {
             Self::Anthropic => 4 * 1024 * 1024,
             // Stay under the 64k free-tier context, with room for the reply.
             Self::Cerebras => 200 * 1024,
+            Self::LmStudio => 96 * 1024,
         }
     }
 
@@ -122,6 +168,7 @@ impl Provider {
         match self {
             Self::Anthropic => 500_000,
             Self::Cerebras => 24 * 1024,
+            Self::LmStudio => 16 * 1024,
         }
     }
 
@@ -130,7 +177,7 @@ impl Provider {
     pub fn identity(self) -> &'static str {
         match self {
             Self::Anthropic => "You are Claude Code, Anthropic's official CLI for Claude.",
-            Self::Cerebras => {
+            Self::Cerebras | Self::LmStudio => {
                 "You are ccrs, a coding assistant running in a terminal. \
                  Call the provided tools to inspect and change the codebase."
             }
@@ -157,6 +204,21 @@ mod tests {
         assert_eq!(Provider::for_model("qwen-4-next"), Provider::Cerebras);
         assert_eq!(Provider::for_model("claude-opus-9"), Provider::Anthropic);
         assert_eq!(Provider::for_model("something-else"), Provider::Anthropic);
+    }
+
+    #[test]
+    fn lm_studio_ids_route_by_marker_not_by_name() {
+        // A bare `qwen…` id would go to Cerebras; the marker wins.
+        let id = lm_studio_model_id("qwen3.8-27b-obliterated");
+        assert_eq!(Provider::for_model(&id), Provider::LmStudio);
+        assert_eq!(Provider::for_model("qwen3.8-27b-obliterated"), Provider::Cerebras);
+        assert_eq!(wire_model(&id), "qwen3.8-27b-obliterated");
+        assert_eq!(wire_model("claude-sonnet-5-5"), "claude-sonnet-5-5");
+    }
+
+    #[test]
+    fn lm_studio_window_is_the_provider_default() {
+        assert_eq!(context_window_for("lmstudio:google/gemma-4-12b-qat"), 32_768);
     }
 
     #[test]

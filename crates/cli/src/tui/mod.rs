@@ -13,8 +13,9 @@ use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use claude_code_core::api::{AVAILABLE_MODELS, Usage};
-use claude_code_core::provider::context_window_for;
+use claude_code_core::api::{AVAILABLE_MODELS, DEFAULT_MODEL, Usage};
+use claude_code_core::lmstudio::{self, LmModel};
+use claude_code_core::provider::{context_window_for, lm_studio_model_id};
 use claude_code_core::session::Session;
 
 use crate::commands::{self, CommandResult};
@@ -30,6 +31,28 @@ pub use event::{ChannelEventHandler, SessionCmd, UiEvent};
 pub enum AppState {
     Idle,
     Busy,
+}
+
+/// What is known about the local LM Studio server.
+#[derive(Clone, PartialEq)]
+pub enum LmStatus {
+    /// Never probed.
+    Unknown,
+    Checking,
+    /// Unreachable; carries the reason.
+    Down(String),
+    Up,
+}
+
+/// One row of the model picker.
+pub struct PickerEntry {
+    pub id: String,
+    pub label: String,
+    /// Shown dimmed after the label.
+    pub detail: String,
+    pub is_default: bool,
+    /// Overrides the table lookup, for models whose window is only known live.
+    pub context_window: Option<u64>,
 }
 
 pub struct PendingPermission {
@@ -72,6 +95,9 @@ pub struct App {
     pub pending_perm: Option<PendingPermission>,
     /// Index into `AVAILABLE_MODELS` while the model picker is open.
     pub model_picker: Option<usize>,
+    /// Models last reported by LM Studio.
+    pub lm_models: Vec<LmModel>,
+    pub lm_status: LmStatus,
     pub spinner_frame: usize,
     pub last_spinner_update: Instant,
     /// Resident memory of this process, in bytes. `None` if the OS refused.
@@ -80,6 +106,7 @@ pub struct App {
     #[cfg(feature = "voice")]
     pub pending_voice_recording: bool,
     ui_rx: mpsc::UnboundedReceiver<UiEvent>,
+    ui_tx: mpsc::UnboundedSender<UiEvent>,
     session_tx: mpsc::UnboundedSender<SessionCmd>,
 }
 
@@ -88,6 +115,7 @@ impl App {
         cwd: PathBuf,
         model: String,
         ui_rx: mpsc::UnboundedReceiver<UiEvent>,
+        ui_tx: mpsc::UnboundedSender<UiEvent>,
         session_tx: mpsc::UnboundedSender<SessionCmd>,
     ) -> Self {
         let context_window = context_window_for(&model);
@@ -112,6 +140,8 @@ impl App {
             state: AppState::Idle,
             pending_perm: None,
             model_picker: None,
+            lm_models: Vec::new(),
+            lm_status: LmStatus::Unknown,
             spinner_frame: 0,
             last_spinner_update: Instant::now(),
             memory: current_memory(),
@@ -119,10 +149,55 @@ impl App {
             #[cfg(feature = "voice")]
             pending_voice_recording: false,
             ui_rx,
+            ui_tx,
             session_tx,
         }
     }
 
+    /// Everything the picker offers: the built-in models, then LM Studio's.
+    pub fn picker_entries(&self) -> Vec<PickerEntry> {
+        let mut entries: Vec<PickerEntry> = AVAILABLE_MODELS
+            .iter()
+            .map(|m| PickerEntry {
+                id: m.id.to_string(),
+                label: m.label.to_string(),
+                detail: m.id.to_string(),
+                is_default: m.id == DEFAULT_MODEL,
+                context_window: None,
+            })
+            .collect();
+
+        entries.extend(self.lm_models.iter().map(|m| {
+            let state = match m.loaded {
+                Some(true) => "loaded",
+                Some(false) => "not loaded",
+                None => "",
+            };
+
+            PickerEntry {
+                id: lm_studio_model_id(&m.id),
+                label: format!("[lm-studio] {}", m.id),
+                detail: state.to_string(),
+                is_default: false,
+                // Only a loaded model has a window worth trusting.
+                context_window: m.context_length.filter(|_| m.loaded != Some(false)),
+            }
+        }));
+
+        entries
+    }
+
+    /// Probe LM Studio in the background; the answer comes back as a `UiEvent`.
+    fn probe_lm_studio(&mut self) {
+        self.lm_status = LmStatus::Checking;
+
+        let tx = self.ui_tx.clone();
+
+        tokio::spawn(async move {
+            let result = lmstudio::list_models().await.map_err(|e| e.to_string());
+            let _ = tx.send(UiEvent::LmStudio(result));
+        });
+    }
     // -- Key handling -------------------------------------------------------
 
     /// Returns `true` if the app should quit.
@@ -256,7 +331,10 @@ impl App {
         let Some(selected) = self.model_picker else {
             return;
         };
-        let count = AVAILABLE_MODELS.len();
+        let entries = self.picker_entries();
+        let count = entries.len();
+        // The list can shrink under the cursor when a probe comes back empty.
+        let selected = selected.min(count.saturating_sub(1));
 
         match code {
             KeyCode::Up => {
@@ -267,8 +345,15 @@ impl App {
             }
             KeyCode::Enter => {
                 self.model_picker = None;
-                let info = &AVAILABLE_MODELS[selected];
-                self.set_model(info.id.to_string(), info.label.to_string());
+                let Some(entry) = entries.get(selected) else {
+                    return;
+                };
+
+                self.set_model(entry.id.clone(), entry.label.clone());
+
+                if let Some(window) = entry.context_window {
+                    self.context_window = window;
+                }
             }
             KeyCode::Esc => {
                 self.model_picker = None;
@@ -307,10 +392,14 @@ impl App {
                 }
 
                 CommandResult::PickModel => {
-                    // Start on the active model
-                    let current = AVAILABLE_MODELS
+                    // Open at once; LM Studio's models join the list when the
+                    // probe answers, after the built-in ones, so indices hold.
+                    self.probe_lm_studio();
+
+                    let current = self
+                        .picker_entries()
                         .iter()
-                        .position(|m| m.id == self.model)
+                        .position(|e| e.id == self.model)
                         .unwrap_or(0);
                     self.model_picker = Some(current);
                 }
@@ -417,6 +506,17 @@ impl App {
                 self.messages.push(DisplayMessage::Error(msg));
                 self.state = AppState::Idle;
             }
+
+            UiEvent::LmStudio(result) => match result {
+                Ok(models) => {
+                    self.lm_models = models;
+                    self.lm_status = LmStatus::Up;
+                }
+                Err(reason) => {
+                    self.lm_models.clear();
+                    self.lm_status = LmStatus::Down(reason);
+                }
+            },
 
             UiEvent::PermissionRequest {
                 description,
@@ -528,6 +628,7 @@ pub fn run(
     ui_rx: mpsc::UnboundedReceiver<UiEvent>,
 ) -> Result<()> {
     let model = session.model().to_string();
+    let app_ui_tx = ui_tx.clone();
 
     // Channel for UI → session commands
     let (session_tx, session_rx) = mpsc::unbounded_channel();
@@ -560,7 +661,7 @@ pub fn run(
         original_hook(info);
     }));
 
-    let mut app = App::new(cwd, model, ui_rx, session_tx);
+    let mut app = App::new(cwd, model, ui_rx, app_ui_tx, session_tx);
 
     // Start with a clean alternate screen
     terminal.clear()?;
@@ -671,3 +772,4 @@ pub fn run(
 
     Ok(())
 }
+

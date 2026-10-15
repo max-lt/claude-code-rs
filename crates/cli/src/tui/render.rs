@@ -7,9 +7,9 @@ use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use super::markdown::render_markdown;
-use super::{App, AppState, DisplayMessage};
+use super::{App, AppState, DisplayMessage, LmStatus, PickerEntry};
 use crate::commands;
-use claude_code_core::api::{AVAILABLE_MODELS, DEFAULT_MODEL};
+use claude_code_core::provider::{LM_STUDIO_PREFIX, wire_model};
 
 /// Render the entire UI.
 pub fn render(app: &mut App, frame: &mut Frame) {
@@ -18,7 +18,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     let has_perm = app.pending_perm.is_some();
     let suggestions = slash_suggestions(&app.input);
     let suggestion_height = if app.model_picker.is_some() {
-        (AVAILABLE_MODELS.len() as u16) + 2 // top border + hint line
+        (app.picker_entries().len() as u16) + 3 // border + lm-studio status + hint
     } else if suggestions.is_empty() {
         0u16
     } else {
@@ -53,7 +53,7 @@ pub fn render(app: &mut App, frame: &mut Frame) {
     }
 
     if let Some(selected) = app.model_picker {
-        render_model_picker(selected, &app.model, frame, chunks[3]);
+        render_model_picker(app, selected, frame, chunks[3]);
     } else if !suggestions.is_empty() {
         render_suggestions(&suggestions, frame, chunks[3]);
     }
@@ -83,7 +83,7 @@ fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
     let mut bar = vec![
         Span::styled(" claude-code-rs", Style::new().bold()),
         Span::raw(" │ "),
-        Span::raw(&app.model),
+        Span::raw(display_model(&app.model)),
         Span::raw(" │ "),
         Span::raw(tokens),
         Span::raw(" │ "),
@@ -348,10 +348,20 @@ fn render_suggestions(
 // Model picker
 // ---------------------------------------------------------------------------
 
-fn render_model_picker(selected: usize, current: &str, frame: &mut Frame, area: Rect) {
+/// The model name as the user knows it: without the internal LM Studio marker.
+fn display_model(model: &str) -> String {
+    match model.strip_prefix(LM_STUDIO_PREFIX) {
+        Some(_) => format!("[lm-studio] {}", wire_model(model)),
+        None => model.to_string(),
+    }
+}
+
+fn render_model_picker(app: &App, selected: usize, frame: &mut Frame, area: Rect) {
+    let entries: Vec<PickerEntry> = app.picker_entries();
+    let selected = selected.min(entries.len().saturating_sub(1));
     let mut lines: Vec<Line> = Vec::new();
 
-    for (i, model) in AVAILABLE_MODELS.iter().enumerate() {
+    for (i, entry) in entries.iter().enumerate() {
         let is_selected = i == selected;
 
         let pointer = if is_selected { "❯ " } else { "  " };
@@ -363,18 +373,38 @@ fn render_model_picker(selected: usize, current: &str, frame: &mut Frame, area: 
 
         let mut spans = vec![
             Span::styled(pointer, Style::new().fg(Color::Cyan).bold()),
-            Span::styled(model.label, name_style),
-            Span::styled(format!("  {}", model.id), Style::new().fg(Color::DarkGray)),
+            Span::styled(entry.label.clone(), name_style),
         ];
 
-        if model.id == DEFAULT_MODEL {
+        if !entry.detail.is_empty() {
+            spans.push(Span::styled(
+                format!("  {}", entry.detail),
+                Style::new().fg(Color::DarkGray),
+            ));
+        }
+
+        if entry.is_default {
             spans.push(Span::styled(" [default]", Style::new().fg(Color::DarkGray)));
         }
-        if model.id == current {
+        if entry.id == app.model {
             spans.push(Span::styled(" ✓", Style::new().fg(Color::Green).bold()));
         }
 
         lines.push(Line::from(spans));
+    }
+
+    let status = match &app.lm_status {
+        LmStatus::Unknown => None,
+        LmStatus::Checking => Some("  lm-studio: checking…".to_string()),
+        LmStatus::Up if app.lm_models.is_empty() => {
+            Some("  lm-studio: up, but no chat model is served".to_string())
+        }
+        LmStatus::Up => None,
+        LmStatus::Down(_) => Some("  lm-studio: not reachable (is the server on :1234?)".to_string()),
+    };
+
+    if let Some(status) = status {
+        lines.push(Line::styled(status, Style::new().fg(Color::DarkGray)));
     }
 
     lines.push(Line::styled(

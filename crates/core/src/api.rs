@@ -8,11 +8,14 @@ use tokio_util::sync::CancellationToken;
 
 use crate::event::EventHandler;
 use crate::openai;
-use crate::provider::Provider;
+use crate::provider::{Provider, wire_model};
 
 const API_VERSION: &str = "2023-06-01";
 
 const CEREBRAS_KEY_VAR: &str = "CEREBRAS_API_KEY";
+
+/// LM Studio needs no key by default; set this if the server enforces one.
+const LM_STUDIO_KEY_VAR: &str = "LMSTUDIO_API_KEY";
 
 pub use crate::provider::{AVAILABLE_MODELS, DEFAULT_MODEL};
 
@@ -312,9 +315,9 @@ impl ApiClient {
     ) -> serde_json::Value {
         let provider = self.provider();
 
-        if provider == Provider::Cerebras {
+        if provider.is_openai_compatible() {
             return openai::build_body(
-                &self.model,
+                wire_model(&self.model),
                 messages,
                 system_prompt,
                 tools,
@@ -374,6 +377,13 @@ impl ApiClient {
 
                 req = req.header("authorization", format!("Bearer {key}"));
             }
+            Provider::LmStudio => {
+                if let Ok(key) = std::env::var(LM_STUDIO_KEY_VAR)
+                    && !key.is_empty()
+                {
+                    req = req.header("authorization", format!("Bearer {key}"));
+                }
+            }
         }
 
         Ok(req.json(body))
@@ -429,7 +439,9 @@ impl ApiClient {
                                 Provider::Anthropic => {
                                     handle_sse_event(&msg.event, &msg.data, &mut state, handler)?
                                 }
-                                Provider::Cerebras => chunks.handle_chunk(&msg.data, handler)?,
+                                Provider::Cerebras | Provider::LmStudio => {
+                                    chunks.handle_chunk(&msg.data, handler)?
+                                }
                             };
 
                             if done {
@@ -465,7 +477,7 @@ impl ApiClient {
 
         Ok(match provider {
             Provider::Anthropic => state.into_result(),
-            Provider::Cerebras => chunks.into_result(),
+            Provider::Cerebras | Provider::LmStudio => chunks.into_result(),
         })
     }
 }

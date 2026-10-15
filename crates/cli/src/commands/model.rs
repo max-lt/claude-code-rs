@@ -1,4 +1,5 @@
 use claude_code_core::api::{AVAILABLE_MODELS, DEFAULT_MODEL};
+use claude_code_core::provider::LM_STUDIO_PREFIX;
 
 use super::CommandResult;
 
@@ -7,6 +8,17 @@ pub fn run(args: &str, current_model: &str) -> CommandResult {
 
     if requested.is_empty() {
         return CommandResult::PickModel;
+    }
+
+    // An explicit LM Studio id, as `lmstudio:<name>`. The name is not checked
+    // here: the server may be down now and up by the time of the next turn.
+    if let Some(name) = requested.strip_prefix(LM_STUDIO_PREFIX)
+        && !name.is_empty()
+    {
+        return CommandResult::SetModel {
+            id: requested.to_string(),
+            label: format!("[lm-studio] {name}"),
+        };
     }
 
     // Try exact match first, then substring match
@@ -55,6 +67,6 @@ fn list_models(current_model: &str) -> String {
         ));
     }
 
-    text.push_str("\nUsage: /model <name>");
+    text.push_str("\nUsage: /model <name> (or /model lmstudio:<name>; /model alone lists LM Studio too)");
     text
 }

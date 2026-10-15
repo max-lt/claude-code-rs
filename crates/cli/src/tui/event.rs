@@ -4,6 +4,7 @@ use tokio::sync::mpsc;
 
 use claude_code_core::api::Usage;
 use claude_code_core::event::EventHandler;
+use claude_code_core::lmstudio::LmModel;
 
 /// Events sent from the session task to the UI.
 pub enum UiEvent {
@@ -29,6 +30,8 @@ pub enum UiEvent {
         context_used: u64,
     },
     Failed(String),
+    /// Outcome of probing LM Studio: its models, or why it is not usable.
+    LmStudio(Result<Vec<LmModel>, String>),
     PermissionRequest {
         description: String,
         respond: std_mpsc::SyncSender<bool>,
