@@ -80,7 +80,7 @@ fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
 
     let ctx = format!("ctx {}% ({})", ctx_pct, format_tokens(app.context_window));
 
-    let bar = Line::from(vec![
+    let mut bar = vec![
         Span::styled(" claude-code-rs", Style::new().bold()),
         Span::raw(" │ "),
         Span::raw(&app.model),
@@ -88,7 +88,14 @@ fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
         Span::raw(tokens),
         Span::raw(" │ "),
         Span::styled(ctx, ctx_style),
-    ]);
+    ];
+
+    if let Some(bytes) = app.memory {
+        bar.push(Span::raw(" │ "));
+        bar.push(Span::raw(format!("mem {}", format_bytes(bytes))));
+    }
+
+    let bar = Line::from(bar);
 
     let widget = Paragraph::new(bar).style(Style::new().bg(Color::DarkGray).fg(Color::White));
     frame.render_widget(widget, area);
@@ -622,6 +629,23 @@ fn format_tokens(n: u64) -> String {
         format!("{:.1}k", n as f64 / 1000.0)
     } else {
         n.to_string()
+    }
+}
+
+/// Human-readable byte size: `512 KB`, `12.3 MB`, `1.2 GB`.
+fn format_bytes(bytes: usize) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+
+    let b = bytes as f64;
+
+    if b >= GB {
+        format!("{:.1} GB", b / GB)
+    } else if b >= MB {
+        format!("{:.1} MB", b / MB)
+    } else {
+        format!("{:.0} KB", b / KB)
     }
 }
 

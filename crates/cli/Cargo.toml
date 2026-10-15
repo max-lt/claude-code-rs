@@ -29,3 +29,4 @@ reqwest = { version = "0.12", default-features = false, features = ["multipart",
 cpal = { version = "0.18", optional = true }
 hound = { version = "3.5", optional = true }
 pulldown-cmark = "0.13"
+memory-stats = "1.2.0"

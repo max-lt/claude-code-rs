@@ -74,6 +74,9 @@ pub struct App {
     pub model_picker: Option<usize>,
     pub spinner_frame: usize,
     pub last_spinner_update: Instant,
+    /// Resident memory of this process, in bytes. `None` if the OS refused.
+    pub memory: Option<usize>,
+    last_memory_update: Instant,
     #[cfg(feature = "voice")]
     pub pending_voice_recording: bool,
     ui_rx: mpsc::UnboundedReceiver<UiEvent>,
@@ -111,6 +114,8 @@ impl App {
             model_picker: None,
             spinner_frame: 0,
             last_spinner_update: Instant::now(),
+            memory: current_memory(),
+            last_memory_update: Instant::now(),
             #[cfg(feature = "voice")]
             pending_voice_recording: false,
             ui_rx,
@@ -426,6 +431,11 @@ impl App {
     }
 }
 
+/// Resident memory (RSS) of this process, in bytes.
+fn current_memory() -> Option<usize> {
+    memory_stats::memory_stats().map(|s| s.physical_mem)
+}
+
 /// First matching slash command for the current input, if any.
 /// Mirrors the filter used to render the suggestion list.
 fn first_suggestion(input: &str) -> Option<&'static str> {
@@ -605,6 +615,12 @@ pub fn run(
         {
             app.spinner_frame = (app.spinner_frame + 1) % 10;
             app.last_spinner_update = Instant::now();
+        }
+
+        // Refresh memory usage about once per second
+        if app.last_memory_update.elapsed() >= Duration::from_secs(1) {
+            app.memory = current_memory();
+            app.last_memory_update = Instant::now();
         }
 
         terminal.draw(|f| render::render(&mut app, f))?;
