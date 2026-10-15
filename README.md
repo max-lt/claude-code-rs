@@ -54,9 +54,9 @@ Then type your messages at the `>` prompt. Claude streams responses and uses too
 
 | Model | Provider | Context | Credential |
 |-------|----------|---------|------------|
-| `claude-sonnet-4-5` | Anthropic | 200k | OAuth or API key |
-| `claude-opus-4-6` | Anthropic | 200k | OAuth or API key |
-| `claude-haiku-4-5` | Anthropic | 200k | OAuth or API key |
+| `claude-sonnet-5-5` | Anthropic | 200k | OAuth or API key |
+| `claude-opus-5-5` | Anthropic | 200k | OAuth or API key |
+| `claude-haiku-5-5` | Anthropic | 200k | OAuth or API key |
 | `qwen-3.8-27b` | Cerebras | 64k | `CEREBRAS_API_KEY` |
 | `gpt-oss-120b` | Cerebras | 65k | `CEREBRAS_API_KEY` |
 

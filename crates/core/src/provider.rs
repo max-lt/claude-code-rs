@@ -20,24 +20,24 @@ pub struct ModelInfo {
     pub context_window: u64,
 }
 
-pub const DEFAULT_MODEL: &str = "claude-sonnet-4-5";
+pub const DEFAULT_MODEL: &str = "claude-sonnet-5-5";
 
 pub const AVAILABLE_MODELS: &[ModelInfo] = &[
     ModelInfo {
-        id: "claude-sonnet-4-5",
-        label: "Sonnet 4.5",
+        id: "claude-sonnet-5-5",
+        label: "Sonnet 5.5",
         provider: Provider::Anthropic,
         context_window: 200_000,
     },
     ModelInfo {
-        id: "claude-opus-4-6",
-        label: "Opus 4.6",
+        id: "claude-opus-5-5",
+        label: "Opus 5.5",
         provider: Provider::Anthropic,
         context_window: 200_000,
     },
     ModelInfo {
-        id: "claude-haiku-4-5",
-        label: "Haiku 4.5",
+        id: "claude-haiku-5-5",
+        label: "Haiku 5.5",
         provider: Provider::Anthropic,
         context_window: 200_000,
     },
@@ -145,7 +145,7 @@ mod tests {
     #[test]
     fn routes_known_models() {
         assert_eq!(
-            Provider::for_model("claude-sonnet-4-5"),
+            Provider::for_model("claude-sonnet-5-5"),
             Provider::Anthropic
         );
         assert_eq!(Provider::for_model("qwen-3.8-27b"), Provider::Cerebras);
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn context_window_comes_from_the_table() {
-        assert_eq!(context_window_for("claude-sonnet-4-5"), 200_000);
+        assert_eq!(context_window_for("claude-sonnet-5-5"), 200_000);
         assert_eq!(context_window_for("qwen-3.8-27b"), 64_000);
     }
 
