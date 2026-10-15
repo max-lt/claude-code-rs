@@ -2,6 +2,7 @@ mod event;
 mod markdown;
 mod render;
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
@@ -31,10 +32,16 @@ pub use event::{ChannelEventHandler, SessionCmd, UiEvent};
 // Display model
 // ---------------------------------------------------------------------------
 
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum AppState {
     Idle,
     Busy,
+}
+
+impl AppState {
+    fn is_busy(&self) -> bool {
+        matches!(self, Self::Busy)
+    }
 }
 
 /// What is known about the local LM Studio server.
@@ -160,6 +167,13 @@ pub struct App {
     pub pending_perm: Option<PendingPermission>,
     /// Index into `AVAILABLE_MODELS` while the model picker is open.
     pub model_picker: Option<usize>,
+    /// Messages typed while a turn is running, sent in order after it ends.
+    pub queue: VecDeque<String>,
+    /// Stop was pressed during the current turn. The queue is then handed
+    /// back to the input instead of being sent.
+    stopping: bool,
+    /// A queued `/quit` ran after a turn ended; the main loop exits.
+    quit_requested: bool,
     /// Models last reported by LM Studio.
     pub lm_models: Vec<LmModel>,
     pub lm_status: LmStatus,
@@ -187,7 +201,7 @@ impl App {
         let context_window = context_window_for(&model);
 
         let mut messages = vec![DisplayMessage::Info(
-            "Type your message to start. Ctrl+C to exit.".to_string(),
+            "Type your message to start.\nWhile it is working, Enter queues a follow-up.\nBackspace on an empty line pops the last one out. Ctrl+C to exit.".to_string(),
         )];
 
         if !restored.is_empty() {
@@ -213,6 +227,9 @@ impl App {
             state: AppState::Idle,
             pending_perm: None,
             model_picker: None,
+            queue: VecDeque::new(),
+            stopping: false,
+            quit_requested: false,
             lm_models: Vec::new(),
             lm_status: LmStatus::Unknown,
             spinner_frame: 0,
@@ -278,7 +295,7 @@ impl App {
         // Ctrl+C: stop Claude if busy, quit if idle
         if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
             if self.state == AppState::Busy {
-                let _ = self.session_tx.send(SessionCmd::Stop);
+                self.stop();
                 return false;
             } else {
                 return true;
@@ -288,7 +305,7 @@ impl App {
         // Esc: stop Claude if busy, do nothing if idle
         if key.code == KeyCode::Esc {
             if self.state == AppState::Busy {
-                let _ = self.session_tx.send(SessionCmd::Stop);
+                self.stop();
                 return false;
             }
         }
@@ -306,7 +323,16 @@ impl App {
 
         match key.code {
             KeyCode::Enter => {
-                if !self.input.is_empty() && self.state != AppState::Busy {
+                if !self.input.is_empty() {
+                    if self.state.is_busy() {
+                        // Queue it: the session sends it when the current
+                        // turn ends.
+                        self.queue.push_back(self.input.trim_end().to_string());
+                        self.input.clear();
+                        self.cursor = 0;
+                        self.auto_scroll = true;
+                        return false;
+                    }
                     return self.submit_input();
                 }
             }
@@ -323,6 +349,15 @@ impl App {
             }
 
             KeyCode::Backspace => {
+                if self.input.is_empty() {
+                    // Input is empty: pop the last queued message back for
+                    // editing.
+                    if let Some(text) = self.queue.pop_back() {
+                        self.input = text;
+                        self.cursor = self.input.chars().count();
+                    }
+                    return false;
+                }
                 if self.cursor > 0 {
                     self.cursor -= 1;
                     let byte_pos = self
@@ -336,7 +371,12 @@ impl App {
             }
 
             KeyCode::Delete => {
-                if self.cursor < self.input.chars().count() {
+                if self.input.is_empty() {
+                    if let Some(text) = self.queue.pop_front() {
+                        self.input = text;
+                        self.cursor = 0;
+                    }
+                } else if self.cursor < self.input.chars().count() {
                     let byte_pos = self
                         .input
                         .char_indices()
@@ -427,9 +467,12 @@ impl App {
                 if let Some(window) = entry.context_window {
                     self.context_window = window;
                 }
+
+                self.resume_queue();
             }
             KeyCode::Esc => {
                 self.model_picker = None;
+                self.resume_queue();
             }
             _ => {}
         }
@@ -443,11 +486,16 @@ impl App {
             .push(DisplayMessage::Info(format!("Switched to {label}.")));
     }
 
-    /// Process input: slash command or message. Returns `true` to quit.
+    /// Process the input line: slash command or message. Returns `true` to quit.
     fn submit_input(&mut self) -> bool {
         let text = std::mem::take(&mut self.input);
         self.cursor = 0;
+        self.submit_text(text)
+    }
 
+    /// Run one entry, typed or queued: a slash command, a `!` command, or a
+    /// message for the model. Returns `true` to quit.
+    fn submit_text(&mut self, text: String) -> bool {
         // Slash commands
         if let Some(result) = commands::handle_command(&text, &self.model) {
             match result {
@@ -572,12 +620,22 @@ impl App {
                 self.usage.input_tokens += usage.input_tokens;
                 self.usage.output_tokens += usage.output_tokens;
                 self.context_used = context_used;
-                self.state = AppState::Idle;
+
+                // Stop can lose the race to a turn that was already ending:
+                // the user still asked to stop, so do not send the queue.
+                if std::mem::take(&mut self.stopping) {
+                    self.hand_back_queue();
+                } else {
+                    self.drain_queue();
+                }
             }
 
             UiEvent::Failed(msg) => {
                 self.messages.push(DisplayMessage::Error(msg));
-                self.state = AppState::Idle;
+                // Stopped, or an API error: either way, do not fire the queue
+                // into a broken or unwanted state.
+                self.stopping = false;
+                self.hand_back_queue();
             }
 
             UiEvent::LmStudio(result) => match result {
@@ -601,6 +659,71 @@ impl App {
                 });
             }
         }
+    }
+
+    /// Picker closed while idle: carry on with whatever is still queued.
+    fn resume_queue(&mut self) {
+        if self.state == AppState::Idle && !self.queue.is_empty() {
+            self.drain_queue();
+        }
+    }
+
+    /// Ask the session to stop the current turn. The queue is not sent
+    /// afterwards: it goes back to the input, see `hand_back_queue`.
+    fn stop(&mut self) {
+        self.stopping = true;
+        let _ = self.session_tx.send(SessionCmd::Stop);
+    }
+
+    /// After a turn has ended: run queued entries in order until one starts a
+    /// new turn, or the queue is empty. Slash and `!` commands run as if typed.
+    fn drain_queue(&mut self) {
+        self.state = AppState::Idle;
+
+        while self.state == AppState::Idle
+            && let Some(text) = self.queue.pop_front()
+        {
+            self.auto_scroll = true;
+
+            if self.submit_text(text) {
+                self.quit_requested = true;
+                return;
+            }
+
+            // `/rec` leaves the TUI; let the main loop do that first.
+            #[cfg(feature = "voice")]
+            if self.pending_voice_recording {
+                return;
+            }
+
+            // A queued `/model` opened the picker: wait for the choice, so
+            // the rest of the queue runs on the model picked. Closing the
+            // picker resumes the queue.
+            if self.model_picker.is_some() {
+                return;
+            }
+        }
+    }
+
+    /// After a stop or an error: put the queue back in the input for editing
+    /// instead of sending it. Several entries are joined into one line; the
+    /// input holds a single line.
+    fn hand_back_queue(&mut self) {
+        self.state = AppState::Idle;
+
+        if self.queue.is_empty() {
+            return;
+        }
+
+        let mut parts: Vec<String> = self.queue.drain(..).collect();
+
+        // Keep what was being typed, after the queued text.
+        if !self.input.trim().is_empty() {
+            parts.push(std::mem::take(&mut self.input));
+        }
+
+        self.input = parts.join(" ");
+        self.cursor = self.input.chars().count();
     }
 }
 
@@ -635,27 +758,37 @@ async fn session_loop(
 ) {
     let mut handler = ChannelEventHandler { tx: ui_tx.clone() };
 
-    while let Some(cmd) = cmd_rx.recv().await {
+    // Commands that arrived while a turn was running. The turn's future pins
+    // `&mut session`, so they cannot be applied until it is dropped.
+    let mut deferred = VecDeque::new();
+
+    while let Some(cmd) = {
+        match deferred.pop_front() {
+            Some(cmd) => Some(cmd),
+            None => cmd_rx.recv().await,
+        }
+    } {
         match cmd {
             SessionCmd::SendMessage(text) => {
                 let cancel = CancellationToken::new();
                 let token = cancel.clone();
 
                 // Scoped so the future (and its `&mut session` borrow) is
-                // dropped before the session is read back below.
+                // dropped before the session is read back below. Commands
+                // that arrive while the turn is running are held in
+                // `deferred` so they can be applied right after.
                 let result = {
                     let message_future = session.send_message(&text, &mut handler, &token);
-                    tokio::pin!(message_future);
+                    let mut message_future = Box::pin(message_future);
 
-                    // Race message completion against stop commands
                     loop {
                         tokio::select! {
                             res = &mut message_future => break res,
                             Some(cmd) = cmd_rx.recv() => {
-                                if matches!(cmd, SessionCmd::Stop) {
-                                    cancel.cancel();
+                                match cmd {
+                                    SessionCmd::Stop => cancel.cancel(),
+                                    _ => deferred.push_back(cmd),
                                 }
-                                // Other commands ignored while busy
                             }
                         }
                     }
@@ -872,6 +1005,11 @@ pub fn run(
         while let Ok(ev) = app.ui_rx.try_recv() {
             app.handle_ui_event(ev);
         }
+
+        // A queued `/quit` ran when its turn came.
+        if app.quit_requested {
+            break;
+        }
     }
 
     // Cleanup
@@ -892,3 +1030,143 @@ pub fn run(
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An app wired to channels the test can read, starting mid-turn.
+    fn busy_app() -> (App, mpsc::UnboundedReceiver<SessionCmd>) {
+        let (ui_tx, ui_rx) = mpsc::unbounded_channel();
+        let (session_tx, session_rx) = mpsc::unbounded_channel();
+        let mut app = App::new(
+            PathBuf::from("/tmp"),
+            DEFAULT_MODEL.to_string(),
+            Vec::new(),
+            ui_rx,
+            ui_tx,
+            session_tx,
+        );
+        app.state = AppState::Busy;
+        (app, session_rx)
+    }
+
+    fn done() -> UiEvent {
+        UiEvent::Done {
+            usage: Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+            },
+            context_used: 0,
+        }
+    }
+
+    fn sent(rx: &mut mpsc::UnboundedReceiver<SessionCmd>) -> Vec<String> {
+        let mut out = Vec::new();
+        while let Ok(cmd) = rx.try_recv() {
+            out.push(match cmd {
+                SessionCmd::SendMessage(t) => format!("send:{t}"),
+                SessionCmd::SetModel(m) => format!("model:{m}"),
+                SessionCmd::Clear => "clear".to_string(),
+                SessionCmd::Stop => "stop".to_string(),
+            });
+        }
+        out
+    }
+
+    #[test]
+    fn queued_messages_run_one_turn_at_a_time() {
+        let (mut app, mut rx) = busy_app();
+        app.queue.extend(["first".to_string(), "second".to_string()]);
+
+        app.handle_ui_event(done());
+        assert_eq!(sent(&mut rx), ["send:first"]);
+        assert!(app.state.is_busy());
+
+        app.handle_ui_event(done());
+        assert_eq!(sent(&mut rx), ["send:second"]);
+
+        app.handle_ui_event(done());
+        assert!(sent(&mut rx).is_empty());
+        assert_eq!(app.state, AppState::Idle);
+    }
+
+    #[test]
+    fn queued_commands_run_as_commands() {
+        let (mut app, mut rx) = busy_app();
+        app.queue.extend([
+            "/clear".to_string(),
+            "/model opus".to_string(),
+            "hello".to_string(),
+        ]);
+
+        app.handle_ui_event(done());
+
+        let cmds = sent(&mut rx);
+        assert_eq!(cmds[0], "clear");
+        assert!(cmds[1].starts_with("model:") && cmds[1].contains("opus"));
+        assert_eq!(cmds[2], "send:hello");
+        assert_eq!(cmds.len(), 3);
+    }
+
+    #[test]
+    fn queued_quit_exits() {
+        let (mut app, _rx) = busy_app();
+        app.queue.push_back("/quit".to_string());
+        app.handle_ui_event(done());
+        assert!(app.quit_requested);
+    }
+
+    #[test]
+    fn stop_hands_queue_back_to_input() {
+        let (mut app, mut rx) = busy_app();
+        app.queue.extend(["one".to_string(), "two".to_string()]);
+        app.input = "three".to_string();
+
+        app.stop();
+        app.handle_ui_event(UiEvent::Failed("Stopped.".to_string()));
+
+        assert_eq!(sent(&mut rx), ["stop"]);
+        assert_eq!(app.input, "one two three");
+        assert_eq!(app.cursor, app.input.chars().count());
+        assert!(app.queue.is_empty());
+        assert_eq!(app.state, AppState::Idle);
+    }
+
+    #[test]
+    fn stop_that_loses_the_race_still_holds_the_queue() {
+        let (mut app, mut rx) = busy_app();
+        app.queue.push_back("next".to_string());
+
+        app.stop();
+        app.handle_ui_event(done()); // turn finished before Stop landed
+
+        assert_eq!(sent(&mut rx), ["stop"]);
+        assert_eq!(app.input, "next");
+        assert!(!app.stopping);
+    }
+
+    #[test]
+    fn api_error_does_not_fire_the_queue() {
+        let (mut app, mut rx) = busy_app();
+        app.queue.push_back("next".to_string());
+
+        app.handle_ui_event(UiEvent::Failed("overloaded".to_string()));
+
+        assert!(sent(&mut rx).is_empty());
+        assert_eq!(app.input, "next");
+    }
+
+    // `/model` probes LM Studio with `tokio::spawn`, so this needs a runtime.
+    #[tokio::test]
+    async fn queued_model_picker_pauses_the_queue() {
+        let (mut app, mut rx) = busy_app();
+        app.queue.extend(["/model".to_string(), "after".to_string()]);
+
+        app.handle_ui_event(done());
+        assert!(app.model_picker.is_some());
+        assert!(sent(&mut rx).is_empty());
+
+        app.handle_picker_key(KeyCode::Esc);
+        assert_eq!(sent(&mut rx), ["send:after"]);
+    }
+}

@@ -634,11 +634,30 @@ fn str_field<'a>(input: &'a serde_json::Value, key: &str) -> &'a str {
 fn render_input(app: &App, frame: &mut Frame, area: Rect) {
     const SPINNER: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
-    let prompt = if app.state == AppState::Busy {
+    // Text shown to the left of the user's live input, plus whether the live
+    // input belongs in this line at all.
+    let (prefix, show_input) = if app.state == AppState::Busy {
         let frame_char = SPINNER[app.spinner_frame % SPINNER.len()];
-        format!("{frame_char} {}", app.input)
+
+        if app.input.is_empty() && !app.queue.is_empty() {
+            // Nothing in the input yet: preview what runs next so the user
+            // can see, and edit (Backspace pops it back out).
+            let last = app.queue.back().map(String::as_str).unwrap_or("");
+            (
+                format!("{frame_char} [{last} (queued {})] ", app.queue.len()),
+                false,
+            )
+        } else {
+            (format!("{frame_char} "), true)
+        }
     } else {
-        format!("> {}", app.input)
+        ("> ".to_string(), true)
+    };
+
+    let prompt = if show_input {
+        format!("{prefix}{}", app.input)
+    } else {
+        prefix.clone()
     };
 
     let block = Block::default()
@@ -648,10 +667,15 @@ fn render_input(app: &App, frame: &mut Frame, area: Rect) {
     let input_widget = Paragraph::new(prompt).block(block);
     frame.render_widget(input_widget, area);
 
-    // Position cursor: area.x + 2 (prompt + space) + cursor offset, area.y + 1 (border)
-    let cursor_x = area.x + 2 + app.cursor as u16;
-    let cursor_y = area.y + 1;
-    frame.set_cursor_position((cursor_x, cursor_y));
+    // The cursor tracks the live input, which starts right after the prefix.
+    // A preview (queue) has no editable text, so park the cursor at the end.
+    if show_input {
+        let prefix_width = Line::from(prefix.clone()).width() as u16;
+        let cursor_x = area.x + prefix_width + app.cursor as u16;
+        frame.set_cursor_position((cursor_x, area.y + 1));
+    } else {
+        frame.set_cursor_position((area.x + Line::from(prefix).width() as u16, area.y + 1));
+    }
 }
 
 fn format_tokens(n: u64) -> String {
