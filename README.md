@@ -125,6 +125,10 @@ Three layers, merged in order:
 2. `.claude/settings.json` — project (committed)
 3. `.claude/settings.local.json` — local (gitignored)
 
+**Flags:**
+- `--auto` — approve tools without prompting. `deny` rules still apply.
+- `--dangerously-skip-permissions` — approve **every** tool call, ignoring all rules including `deny`. Use only in a sandbox (container, VM).
+
 ## Architecture
 
 ```

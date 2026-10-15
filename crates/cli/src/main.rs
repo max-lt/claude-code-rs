@@ -22,6 +22,10 @@ struct Cli {
     /// Approve tools without prompting. Deny rules still apply.
     #[arg(long)]
     auto: bool,
+
+    /// Approve every tool without prompting, ignoring all rules (deny included).
+    #[arg(long)]
+    dangerously_skip_permissions: bool,
 }
 
 async fn login() -> Result<Credentials> {
@@ -99,7 +103,12 @@ async fn main() -> Result<()> {
 
     let (ui_tx, ui_rx) = tokio::sync::mpsc::unbounded_channel();
     let perms = ChannelPermissions::new(settings.permissions, cwd.clone(), ui_tx.clone())
-        .with_auto(cli.auto);
+        .with_auto(cli.auto)
+        .with_skip_all(cli.dangerously_skip_permissions);
+
+    if cli.dangerously_skip_permissions {
+        println!("WARNING: --dangerously-skip-permissions is set. All tools run without prompting; deny rules are ignored.\n");
+    }
 
     let session = SessionBuilder::new(access_token, is_oauth).permissions(perms)?;
 

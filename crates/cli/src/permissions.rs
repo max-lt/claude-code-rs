@@ -16,6 +16,7 @@ pub struct ChannelPermissions {
     project_dir: PathBuf,
     ui_tx: mpsc::UnboundedSender<UiEvent>,
     auto: bool,
+    skip_all: bool,
 }
 
 impl ChannelPermissions {
@@ -29,6 +30,7 @@ impl ChannelPermissions {
             project_dir,
             ui_tx,
             auto: false,
+            skip_all: false,
         }
     }
 
@@ -38,10 +40,21 @@ impl ChannelPermissions {
         self.auto = auto;
         self
     }
+
+    /// Allow every tool invocation, ignoring all config rules (including `deny`).
+    pub fn with_skip_all(mut self, skip_all: bool) -> Self {
+        self.skip_all = skip_all;
+        self
+    }
 }
 
 impl PermissionHandler for ChannelPermissions {
     fn allow(&mut self, tool: &Tool<'_>) -> bool {
+        // --dangerously-skip-permissions: bypass everything, deny rules included
+        if self.skip_all {
+            return true;
+        }
+
         // Rule-based config takes priority (may deny)
         if let Some(allowed) = self.config.check(tool, &self.project_dir) {
             return allowed;
