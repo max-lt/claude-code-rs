@@ -207,10 +207,7 @@ impl<P: PermissionHandler> Session<P> {
             Some(tool_defs.as_slice())
         };
 
-        let mut total_usage = Usage {
-            input_tokens: 0,
-            output_tokens: 0,
-        };
+        let mut total_usage = Usage::default();
 
         // Every call resends the whole history, so each `input_tokens` is an
         // absolute prompt size, not an increment. Summing them would count the
@@ -241,11 +238,13 @@ impl<P: PermissionHandler> Session<P> {
                 }
             };
 
-            total_usage.input_tokens += stream_result.usage.input_tokens;
-            total_usage.output_tokens += stream_result.usage.output_tokens;
+            total_usage.add(&stream_result.usage);
 
             // The reply below is appended to the history, so it counts too.
-            context_used = stream_result.usage.input_tokens + stream_result.usage.output_tokens;
+            // With caching, `input_tokens` is only the uncached tail, so the
+            // cached parts are added back to get the real prompt size.
+            context_used =
+                stream_result.usage.prompt_tokens() + stream_result.usage.output_tokens;
 
             // Push assistant message with all content blocks
             self.messages.push(Message {

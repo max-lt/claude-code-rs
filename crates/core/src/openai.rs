@@ -162,10 +162,7 @@ impl Default for Accumulator {
         Self {
             text: String::new(),
             calls: Vec::new(),
-            usage: Usage {
-                input_tokens: 0,
-                output_tokens: 0,
-            },
+            usage: Usage::default(),
             stop_reason: StopReason::EndTurn,
         }
     }

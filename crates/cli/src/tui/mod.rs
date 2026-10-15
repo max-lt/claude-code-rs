@@ -212,10 +212,7 @@ impl App {
         Self {
             cwd,
             model,
-            usage: Usage {
-                input_tokens: 0,
-                output_tokens: 0,
-            },
+            usage: Usage::default(),
             context_window,
             context_used: 0,
             messages,
@@ -617,8 +614,7 @@ impl App {
                 usage,
                 context_used,
             } => {
-                self.usage.input_tokens += usage.input_tokens;
-                self.usage.output_tokens += usage.output_tokens;
+                self.usage.add(&usage);
                 self.context_used = context_used;
 
                 // Stop can lose the race to a turn that was already ending:
@@ -1052,10 +1048,7 @@ mod tests {
 
     fn done() -> UiEvent {
         UiEvent::Done {
-            usage: Usage {
-                input_tokens: 0,
-                output_tokens: 0,
-            },
+            usage: Usage::default(),
             context_used: 0,
         }
     }

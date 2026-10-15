@@ -62,11 +62,17 @@ pub fn render(app: &mut App, frame: &mut Frame) {
 }
 
 fn render_status_bar(app: &App, frame: &mut Frame, area: Rect) {
-    let tokens = format!(
+    let mut tokens = format!(
         "{}↑ {}↓",
-        format_tokens(app.usage.input_tokens),
+        format_tokens(app.usage.prompt_tokens()),
         format_tokens(app.usage.output_tokens),
     );
+
+    // Share of prompt tokens served from the cache. Only Anthropic reports it.
+    if app.usage.cache_read_input_tokens > 0 {
+        let pct = app.usage.cache_read_input_tokens * 100 / app.usage.prompt_tokens().max(1);
+        tokens.push_str(&format!(" ({pct}% cached)"));
+    }
 
     let ctx_pct = (app.context_used.saturating_mul(100) / app.context_window.max(1)).min(100);
 

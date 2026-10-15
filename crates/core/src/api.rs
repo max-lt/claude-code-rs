@@ -83,10 +83,31 @@ pub struct Message {
     pub content: Content,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Usage {
+    /// Prompt tokens billed at the full rate. With prompt caching this is only
+    /// the part after the last cache breakpoint, not the whole prompt.
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// Prompt tokens written to the cache by this request (billed at +25%).
+    pub cache_creation_input_tokens: u64,
+    /// Prompt tokens served from the cache (billed at ~10%).
+    pub cache_read_input_tokens: u64,
+}
+
+impl Usage {
+    /// Size of the whole prompt, cached or not.
+    pub fn prompt_tokens(&self) -> u64 {
+        self.input_tokens + self.cache_creation_input_tokens + self.cache_read_input_tokens
+    }
+
+    /// Accumulate another request's usage into this one.
+    pub fn add(&mut self, other: &Usage) {
+        self.input_tokens += other.input_tokens;
+        self.output_tokens += other.output_tokens;
+        self.cache_creation_input_tokens += other.cache_creation_input_tokens;
+        self.cache_read_input_tokens += other.cache_read_input_tokens;
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,11 +150,28 @@ impl StreamState {
         Self {
             blocks: Vec::new(),
             current: None,
-            usage: Usage {
-                input_tokens: 0,
-                output_tokens: 0,
-            },
+            usage: Usage::default(),
             stop_reason: StopReason::EndTurn,
+        }
+    }
+
+    /// Take whichever usage counts this event carries. `message_start` has
+    /// the input side, `message_delta` the output (and, on newer API
+    /// versions, repeats the input side). Missing fields leave values as-is.
+    fn read_usage(&mut self, u: &serde_json::Value) {
+        let field = |name: &str| u.get(name).and_then(|v| v.as_u64());
+
+        if let Some(n) = field("input_tokens") {
+            self.usage.input_tokens = n;
+        }
+        if let Some(n) = field("output_tokens") {
+            self.usage.output_tokens = n;
+        }
+        if let Some(n) = field("cache_creation_input_tokens") {
+            self.usage.cache_creation_input_tokens = n;
+        }
+        if let Some(n) = field("cache_read_input_tokens") {
+            self.usage.cache_read_input_tokens = n;
         }
     }
 
@@ -332,8 +370,19 @@ impl ApiClient {
             "messages": messages,
         });
 
+        // Prompt caching. The prompt is ordered tools → system → messages, and
+        // a breakpoint caches everything before it. The system breakpoint
+        // covers tools + system; the message breakpoints cover the history.
         if let Some(prompt) = system_prompt {
-            body["system"] = serde_json::json!(prompt);
+            body["system"] = serde_json::json!([{
+                "type": "text",
+                "text": prompt,
+                "cache_control": { "type": "ephemeral" },
+            }]);
+        }
+
+        if let Some(msgs) = body["messages"].as_array_mut() {
+            mark_cache_breakpoints(msgs);
         }
 
         if let Some(tools) = tools
@@ -482,6 +531,46 @@ impl ApiClient {
     }
 }
 
+/// How many user messages, counting back from the newest, get a cache
+/// breakpoint. The newest caches the whole history for the next request; the
+/// one before it is where the previous request put its breakpoint, so this
+/// request reads the cache at that exact spot. With the system breakpoint that
+/// is 3 of the 4 the API allows.
+const MESSAGE_BREAKPOINTS: usize = 2;
+
+/// Put `cache_control` on the last content block of the newest user messages.
+/// Works on the serialized messages, so the stored history stays clean.
+fn mark_cache_breakpoints(messages: &mut [serde_json::Value]) {
+    let user_messages = messages
+        .iter_mut()
+        .rev()
+        .filter(|m| m["role"] == "user")
+        .take(MESSAGE_BREAKPOINTS);
+
+    for msg in user_messages {
+        let content = &mut msg["content"];
+
+        // A plain string has no block to mark: turn it into one text block.
+        if let Some(text) = content.as_str() {
+            if text.is_empty() {
+                continue;
+            }
+            *content = serde_json::json!([{ "type": "text", "text": text }]);
+        }
+
+        let Some(last) = content.as_array_mut().and_then(|b| b.last_mut()) else {
+            continue;
+        };
+
+        // The API rejects a breakpoint on an empty text block.
+        if last["type"] == "text" && last["text"].as_str().is_none_or(str::is_empty) {
+            continue;
+        }
+
+        last["cache_control"] = serde_json::json!({ "type": "ephemeral" });
+    }
+}
+
 fn handle_sse_event(
     event_type: &str,
     data: &str,
@@ -492,10 +581,8 @@ fn handle_sse_event(
         "message_start" => {
             let parsed: serde_json::Value = serde_json::from_str(data)?;
 
-            if let Some(u) = parsed.get("message").and_then(|m| m.get("usage"))
-                && let Some(input) = u.get("input_tokens").and_then(|v| v.as_u64())
-            {
-                state.usage.input_tokens = input;
+            if let Some(u) = parsed.get("message").and_then(|m| m.get("usage")) {
+                state.read_usage(u);
             }
         }
         "content_block_start" => {
@@ -512,10 +599,9 @@ fn handle_sse_event(
         "message_delta" => {
             let parsed: serde_json::Value = serde_json::from_str(data)?;
 
-            if let Some(u) = parsed.get("usage")
-                && let Some(output) = u.get("output_tokens").and_then(|v| v.as_u64())
-            {
-                state.usage.output_tokens = output;
+            // Cumulative counts; any field present overrides `message_start`.
+            if let Some(u) = parsed.get("usage") {
+                state.read_usage(u);
             }
 
             if let Some(reason) = parsed
@@ -579,13 +665,128 @@ mod tests {
         assert_eq!(body["model"], DEFAULT_MODEL);
         assert_eq!(body["max_tokens"], 16384);
         assert_eq!(body["stream"], true);
-        assert_eq!(body["system"], "be brief");
-        assert_eq!(body["messages"][0]["content"], "hi");
+        assert_eq!(body["system"][0]["text"], "be brief");
+        assert_eq!(body["system"][0]["cache_control"]["type"], "ephemeral");
+        assert_eq!(body["messages"][0]["content"][0]["text"], "hi");
 
         // Anthropic takes the tool definitions as-is.
         assert_eq!(body["tools"][0]["name"], "Read");
         assert_eq!(body["tools"][0]["input_schema"]["type"], "object");
         assert!(body.get("max_completion_tokens").is_none());
+    }
+
+    fn user(content: Content) -> Message {
+        Message {
+            role: "user".to_string(),
+            content,
+        }
+    }
+
+    fn assistant(text: &str) -> Message {
+        Message {
+            role: "assistant".to_string(),
+            content: Content::text(text),
+        }
+    }
+
+    fn marked(body: &serde_json::Value, msg: usize) -> Vec<bool> {
+        let content = &body["messages"][msg]["content"];
+        match content.as_array() {
+            Some(blocks) => blocks.iter().map(|b| b.get("cache_control").is_some()).collect(),
+            None => vec![false],
+        }
+    }
+
+    #[test]
+    fn cache_breakpoints_go_on_the_last_two_user_messages() {
+        let client = ApiClient::new("token".to_string(), true);
+
+        let messages = vec![
+            user(Content::text("first")),
+            assistant("ok"),
+            user(Content::Blocks(vec![
+                ContentBlock::ToolResult {
+                    tool_use_id: "a".to_string(),
+                    content: "one".to_string(),
+                    is_error: None,
+                },
+                ContentBlock::ToolResult {
+                    tool_use_id: "b".to_string(),
+                    content: "two".to_string(),
+                    is_error: None,
+                },
+            ])),
+            assistant("ok"),
+            user(Content::text("latest")),
+        ];
+
+        let body = client.build_body(&messages, Some("sys"), None);
+
+        assert_eq!(marked(&body, 0), [false], "oldest user message is not marked");
+        assert_eq!(marked(&body, 1), [false], "assistant messages are not marked");
+        assert_eq!(marked(&body, 2), [false, true], "only the last block is marked");
+        assert_eq!(marked(&body, 4), [true]);
+
+        // At most 4 breakpoints in the whole request.
+        let total = body.to_string().matches("cache_control").count();
+        assert_eq!(total, 3);
+    }
+
+    #[test]
+    fn cache_breakpoints_skip_empty_text() {
+        let client = ApiClient::new("token".to_string(), true);
+        let body = client.build_body(&[user(Content::text(""))], None, None);
+
+        assert_eq!(body["messages"][0]["content"], "");
+        assert!(!body.to_string().contains("cache_control"));
+    }
+
+    #[test]
+    fn stored_history_is_not_marked() {
+        let client = ApiClient::new("token".to_string(), true);
+        let messages = vec![user(Content::text("hi"))];
+        let _ = client.build_body(&messages, Some("sys"), None);
+
+        let json = serde_json::to_string(&messages).unwrap();
+        assert!(!json.contains("cache_control"));
+    }
+
+    #[test]
+    fn openai_bodies_get_no_cache_markers() {
+        for model in ["qwen-3.8-27b", "lmstudio:some-model"] {
+            let mut client = ApiClient::new("token".to_string(), true);
+            client.set_model(model.to_string());
+
+            let body = client.build_body(&[user(Content::text("hi"))], Some("sys"), None);
+            assert!(!body.to_string().contains("cache_control"), "{model}");
+        }
+    }
+
+    #[test]
+    fn stream_usage_includes_cache_counts() {
+        struct Quiet;
+        impl EventHandler for Quiet {
+            fn on_text(&mut self, _: &str) {}
+            fn on_error(&mut self, _: &str) {}
+        }
+
+        let mut state = StreamState::new();
+        let start = r#"{"message":{"usage":{"input_tokens":12,"cache_creation_input_tokens":300,"cache_read_input_tokens":5000,"output_tokens":1}}}"#;
+        let delta = r#"{"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":42}}"#;
+
+        handle_sse_event("message_start", start, &mut state, &mut Quiet).unwrap();
+        handle_sse_event("message_delta", delta, &mut state, &mut Quiet).unwrap();
+
+        assert_eq!(
+            state.usage,
+            Usage {
+                input_tokens: 12,
+                output_tokens: 42,
+                cache_creation_input_tokens: 300,
+                cache_read_input_tokens: 5000,
+            }
+        );
+        assert_eq!(state.usage.prompt_tokens(), 5312);
     }
 
     #[test]
