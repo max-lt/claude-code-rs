@@ -60,7 +60,7 @@ impl Bm25Index {
             .map_err(|e| anyhow::anyhow!("query parse error: {e}"))?;
 
         let top_docs = searcher
-            .search(&parsed_query, &TopDocs::with_limit(limit))
+            .search(&parsed_query, &TopDocs::with_limit(limit).order_by_score())
             .context("search failed")?;
 
         let mut results = Vec::new();
