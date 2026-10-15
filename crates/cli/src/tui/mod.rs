@@ -747,6 +747,29 @@ fn first_suggestion(input: &str) -> Option<&'static str> {
 // Session background task
 // ---------------------------------------------------------------------------
 
+/// Write the conversation to disk and remember its id for the exit hint.
+/// Does nothing while the session holds nothing beyond the bootstrap.
+fn persist(
+    session: &Session<ChannelPermissions>,
+    ui_tx: &mpsc::UnboundedSender<UiEvent>,
+    last_saved: &Mutex<Option<String>>,
+) {
+    let Some(stored) = session.to_stored() else {
+        return;
+    };
+
+    match history::save(&stored) {
+        Ok(()) => {
+            if let Ok(mut slot) = last_saved.lock() {
+                *slot = Some(stored.id);
+            }
+        }
+        Err(e) => {
+            let _ = ui_tx.send(UiEvent::Error(format!("Could not save session: {e}")));
+        }
+    }
+}
+
 async fn session_loop(
     mut session: Session<ChannelPermissions>,
     mut cmd_rx: mpsc::UnboundedReceiver<SessionCmd>,
@@ -795,20 +818,7 @@ async fn session_loop(
                     Ok(summary) => {
                         // Persist after every completed turn so --resume works
                         // even if the process is killed later.
-                        if let Some(stored) = session.to_stored() {
-                            match history::save(&stored) {
-                                Ok(()) => {
-                                    if let Ok(mut slot) = last_saved.lock() {
-                                        *slot = Some(stored.id);
-                                    }
-                                }
-                                Err(e) => {
-                                    let _ = ui_tx.send(UiEvent::Error(format!(
-                                        "Could not save session: {e}"
-                                    )));
-                                }
-                            }
-                        }
+                        persist(&session, &ui_tx, &last_saved);
 
                         let _ = ui_tx.send(UiEvent::Done {
                             usage: summary.usage,
@@ -833,6 +843,10 @@ async fn session_loop(
 
             SessionCmd::SetModel(id) => {
                 session.set_model(id);
+
+                // The model is part of the saved session: without this, a
+                // switch after the last turn would be lost on resume.
+                persist(&session, &ui_tx, &last_saved);
             }
 
             SessionCmd::Clear => {
