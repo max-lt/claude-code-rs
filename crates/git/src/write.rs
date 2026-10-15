@@ -91,7 +91,7 @@ pub fn push(cwd: &Path, remote: &str, refspec: &str, force: bool) -> Result<Stri
     Ok(format!(
         "Pushed {} to {}",
         refspec,
-        remote.name().unwrap_or("unknown")
+        remote.name().ok().flatten().unwrap_or("unknown")
     ))
 }
 

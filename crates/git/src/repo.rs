@@ -20,7 +20,7 @@ pub fn repo_root(path: &Path) -> Result<PathBuf> {
 pub fn current_branch(path: &Path) -> Result<Option<String>> {
     let repo = open_repo(path)?;
     let head = repo.head().context("failed to read HEAD")?;
-    Ok(head.shorthand().map(|s| s.to_string()))
+    Ok(head.shorthand().ok().map(|s| s.to_string()))
 }
 
 /// Information about a branch.

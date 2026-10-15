@@ -52,8 +52,12 @@ pub fn blame(repo_path: &Path, file_path: &str) -> Result<Vec<BlameLine>> {
             let hash = oid.to_string();
             let short_hash = hash[..7.min(hash.len())].to_string();
 
-            let sig = hunk.final_signature();
-            let author = sig.name().unwrap_or("<unknown>").to_string();
+            // Signature may be missing; git2 0.21 returns None instead of
+            // handing out a dangling pointer (RUSTSEC-2026-0184).
+            let author = hunk
+                .final_signature()
+                .and_then(|sig| sig.name().ok().map(str::to_string))
+                .unwrap_or_else(|| "<unknown>".to_string());
 
             let date = if let Ok(commit) = repo.find_commit(oid) {
                 crate::log::format_epoch(commit.time().seconds())
