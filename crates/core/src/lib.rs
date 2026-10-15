@@ -2,6 +2,7 @@ pub mod api;
 pub mod auth;
 pub mod config;
 pub mod event;
+pub mod history;
 pub mod lmstudio;
 pub mod openai;
 pub mod permission;

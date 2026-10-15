@@ -4,6 +4,7 @@ mod render;
 
 use std::path::PathBuf;
 use std::sync::mpsc as std_mpsc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -13,7 +14,10 @@ use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use claude_code_core::api::{AVAILABLE_MODELS, DEFAULT_MODEL, Usage};
+use claude_code_core::api::{
+    AVAILABLE_MODELS, Content, ContentBlock, DEFAULT_MODEL, Message, Usage,
+};
+use claude_code_core::history;
 use claude_code_core::lmstudio::{self, LmModel};
 use claude_code_core::provider::{context_window_for, lm_studio_model_id};
 use claude_code_core::session::Session;
@@ -74,6 +78,67 @@ pub enum DisplayMessage {
     Info(String),
 }
 
+/// Rebuild what the screen showed from a saved conversation.
+/// Thinking blocks are not stored, so they do not come back.
+pub fn display_history(messages: &[Message]) -> Vec<DisplayMessage> {
+    let mut out = Vec::new();
+    // tool_use id -> index of its DisplayMessage, to attach the result later.
+    let mut tool_slots = std::collections::HashMap::new();
+
+    for msg in messages {
+        let is_user = msg.role == "user";
+
+        let blocks = match &msg.content {
+            Content::Text(text) => {
+                out.push(if is_user {
+                    DisplayMessage::User(text.clone())
+                } else {
+                    DisplayMessage::AssistantText(text.clone())
+                });
+                continue;
+            }
+            Content::Blocks(blocks) => blocks,
+        };
+
+        for block in blocks {
+            match block {
+                ContentBlock::Text { text } => out.push(if is_user {
+                    DisplayMessage::User(text.clone())
+                } else {
+                    DisplayMessage::AssistantText(text.clone())
+                }),
+
+                ContentBlock::ToolUse { id, name, input } => {
+                    tool_slots.insert(id.clone(), out.len());
+                    out.push(DisplayMessage::ToolUse {
+                        name: name.clone(),
+                        input: Some(input.clone()),
+                        output: None,
+                        is_error: false,
+                    });
+                }
+
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    is_error,
+                } => {
+                    if let Some(&slot) = tool_slots.get(tool_use_id)
+                        && let Some(DisplayMessage::ToolUse {
+                            output, is_error: err, ..
+                        }) = out.get_mut(slot)
+                    {
+                        *output = Some(content.clone());
+                        *err = is_error.unwrap_or(false);
+                    }
+                }
+            }
+        }
+    }
+
+    out
+}
+
 // ---------------------------------------------------------------------------
 // App state
 // ---------------------------------------------------------------------------
@@ -114,11 +179,21 @@ impl App {
     fn new(
         cwd: PathBuf,
         model: String,
+        restored: Vec<DisplayMessage>,
         ui_rx: mpsc::UnboundedReceiver<UiEvent>,
         ui_tx: mpsc::UnboundedSender<UiEvent>,
         session_tx: mpsc::UnboundedSender<SessionCmd>,
     ) -> Self {
         let context_window = context_window_for(&model);
+
+        let mut messages = vec![DisplayMessage::Info(
+            "Type your message to start. Ctrl+C to exit.".to_string(),
+        )];
+
+        if !restored.is_empty() {
+            messages.push(DisplayMessage::Info("Resumed previous session.".to_string()));
+            messages.extend(restored);
+        }
 
         Self {
             cwd,
@@ -129,9 +204,7 @@ impl App {
             },
             context_window,
             context_used: 0,
-            messages: vec![DisplayMessage::Info(
-                "Type your message to start. Ctrl+C to exit.".to_string(),
-            )],
+            messages,
             scroll: 0,
             auto_scroll: true,
             max_scroll: 0,
@@ -558,6 +631,7 @@ async fn session_loop(
     mut session: Session<ChannelPermissions>,
     mut cmd_rx: mpsc::UnboundedReceiver<SessionCmd>,
     ui_tx: mpsc::UnboundedSender<UiEvent>,
+    last_saved: Arc<Mutex<Option<String>>>,
 ) {
     let mut handler = ChannelEventHandler { tx: ui_tx.clone() };
 
@@ -567,24 +641,45 @@ async fn session_loop(
                 let cancel = CancellationToken::new();
                 let token = cancel.clone();
 
-                let message_future = session.send_message(&text, &mut handler, &token);
-                tokio::pin!(message_future);
+                // Scoped so the future (and its `&mut session` borrow) is
+                // dropped before the session is read back below.
+                let result = {
+                    let message_future = session.send_message(&text, &mut handler, &token);
+                    tokio::pin!(message_future);
 
-                // Race message completion against stop commands
-                let result = loop {
-                    tokio::select! {
-                        res = &mut message_future => break res,
-                        Some(cmd) = cmd_rx.recv() => {
-                            if matches!(cmd, SessionCmd::Stop) {
-                                cancel.cancel();
+                    // Race message completion against stop commands
+                    loop {
+                        tokio::select! {
+                            res = &mut message_future => break res,
+                            Some(cmd) = cmd_rx.recv() => {
+                                if matches!(cmd, SessionCmd::Stop) {
+                                    cancel.cancel();
+                                }
+                                // Other commands ignored while busy
                             }
-                            // Other commands ignored while busy
                         }
                     }
                 };
 
                 match result {
                     Ok(summary) => {
+                        // Persist after every completed turn so --resume works
+                        // even if the process is killed later.
+                        if let Some(stored) = session.to_stored() {
+                            match history::save(&stored) {
+                                Ok(()) => {
+                                    if let Ok(mut slot) = last_saved.lock() {
+                                        *slot = Some(stored.id);
+                                    }
+                                }
+                                Err(e) => {
+                                    let _ = ui_tx.send(UiEvent::Error(format!(
+                                        "Could not save session: {e}"
+                                    )));
+                                }
+                            }
+                        }
+
                         let _ = ui_tx.send(UiEvent::Done {
                             usage: summary.usage,
                             context_used: summary.context_used,
@@ -612,6 +707,11 @@ async fn session_loop(
 
             SessionCmd::Clear => {
                 session.clear();
+
+                // The fresh session has no file yet: nothing to hint at.
+                if let Ok(mut slot) = last_saved.lock() {
+                    *slot = None;
+                }
             }
         }
     }
@@ -624,6 +724,7 @@ async fn session_loop(
 pub fn run(
     cwd: PathBuf,
     session: Session<ChannelPermissions>,
+    restored: Vec<DisplayMessage>,
     ui_tx: mpsc::UnboundedSender<UiEvent>,
     ui_rx: mpsc::UnboundedReceiver<UiEvent>,
 ) -> Result<()> {
@@ -633,8 +734,19 @@ pub fn run(
     // Channel for UI → session commands
     let (session_tx, session_rx) = mpsc::unbounded_channel();
 
+    // Id of the last session written to disk, read back on exit for the
+    // "resume with" hint. A resumed session is already on disk.
+    let last_saved = Arc::new(Mutex::new(
+        session.to_stored().map(|_| session.id().to_string()),
+    ));
+
     // Spawn session loop in background
-    tokio::spawn(session_loop(session, session_rx, ui_tx));
+    tokio::spawn(session_loop(
+        session,
+        session_rx,
+        ui_tx,
+        Arc::clone(&last_saved),
+    ));
 
     // Terminal setup
     crossterm::terminal::enable_raw_mode()?;
@@ -661,7 +773,7 @@ pub fn run(
         original_hook(info);
     }));
 
-    let mut app = App::new(cwd, model, ui_rx, app_ui_tx, session_tx);
+    let mut app = App::new(cwd, model, restored, ui_rx, app_ui_tx, session_tx);
 
     // Start with a clean alternate screen
     terminal.clear()?;
@@ -769,6 +881,13 @@ pub fn run(
         crossterm::event::DisableMouseCapture,
         crossterm::terminal::LeaveAlternateScreen,
     )?;
+
+    // Printed after leaving the alternate screen, or it would vanish with it.
+    let saved_id = last_saved.lock().ok().and_then(|slot| slot.clone());
+
+    if let Some(id) = saved_id {
+        println!("\nResume this conversation with:\n  ccrs --resume {id}");
+    }
 
     Ok(())
 }

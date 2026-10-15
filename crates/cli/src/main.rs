@@ -7,6 +7,7 @@ use anyhow::Result;
 use clap::Parser;
 
 use claude_code_core::config::{Credentials, TokenType};
+use claude_code_core::history::{self, StoredSession};
 use claude_code_core::session::SessionBuilder;
 use claude_code_core::{auth, config};
 
@@ -26,6 +27,14 @@ struct Cli {
     /// Approve every tool without prompting, ignoring all rules (deny included).
     #[arg(long)]
     dangerously_skip_permissions: bool,
+
+    /// Resume a saved conversation. With no ID, pick one from this directory.
+    #[arg(short, long, value_name = "ID", num_args = 0..=1, default_missing_value = "")]
+    resume: Option<String>,
+
+    /// Resume the most recent conversation in this directory
+    #[arg(short = 'c', long = "continue", conflicts_with = "resume")]
+    continue_last: bool,
 }
 
 async fn login() -> Result<Credentials> {
@@ -110,7 +119,43 @@ async fn main() -> Result<()> {
         println!("WARNING: --dangerously-skip-permissions is set. All tools run without prompting; deny rules are ignored.\n");
     }
 
-    let session = SessionBuilder::new(access_token, is_oauth).permissions(perms)?;
+    let mut session = SessionBuilder::new(access_token, is_oauth).permissions(perms)?;
 
-    tui::run(cwd, session, ui_tx, ui_rx)
+    let mut restored = Vec::new();
+
+    if let Some(stored) = select_session(&cli, &cwd)? {
+        restored = tui::display_history(&stored.messages);
+        session.restore(stored);
+    }
+
+    tui::run(cwd, session, restored, ui_tx, ui_rx)
+}
+
+/// Resolve `--resume [ID]` / `--continue` to a saved session, if requested.
+fn select_session(cli: &Cli, cwd: &std::path::Path) -> Result<Option<StoredSession>> {
+    if let Some(id) = cli.resume.as_deref().filter(|id| !id.is_empty()) {
+        return history::load(id).map(Some);
+    }
+
+    if !cli.continue_last && cli.resume.is_none() {
+        return Ok(None);
+    }
+
+    let saved = history::list(cwd)?;
+
+    if saved.is_empty() {
+        println!("No saved conversations in this directory. Starting a new one.\n");
+        return Ok(None);
+    }
+
+    let id = if cli.continue_last {
+        saved[0].id.clone()
+    } else {
+        match ui::prompt_resume(&saved)? {
+            Some(i) => saved[i].id.clone(),
+            None => return Ok(None),
+        }
+    };
+
+    history::load(&id).map(Some)
 }

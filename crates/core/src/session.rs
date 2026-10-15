@@ -5,6 +5,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::api::{ApiClient, Content, ContentBlock, DEFAULT_MODEL, Message, StopReason, Usage};
 use crate::event::EventHandler;
+use crate::history::{self, StoredSession};
 use crate::permission::{AllowAll, PermissionHandler};
 use crate::provider::Provider;
 use crate::tools::{self, ToolRegistry};
@@ -26,6 +27,7 @@ pub struct Session<P: PermissionHandler> {
     bootstrap_len: usize,
     system_prompt: String,
     tools: ToolRegistry,
+    id: String,
 }
 
 pub struct SessionBuilder {
@@ -119,6 +121,7 @@ impl SessionBuilder {
             bootstrap_len,
             system_prompt,
             tools: tools::default_registry(),
+            id: history::new_id(),
         })
     }
 
@@ -142,6 +145,38 @@ impl<P: PermissionHandler> Session<P> {
 
     pub fn clear(&mut self) {
         self.messages.truncate(self.bootstrap_len);
+        // The old conversation stays on disk and remains resumable.
+        self.id = history::new_id();
+    }
+
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+
+    /// Replace the conversation with a saved one. The bootstrap messages are
+    /// kept (they describe the current working directory), the saved model and
+    /// id are adopted so later turns keep appending to the same file.
+    pub fn restore(&mut self, stored: StoredSession) {
+        self.messages.truncate(self.bootstrap_len);
+        self.messages.extend(stored.messages);
+        self.id = stored.id;
+        self.set_model(stored.model);
+    }
+
+    /// Snapshot of the conversation for [`history::save`]. `None` while there
+    /// is nothing beyond the bootstrap, so empty sessions leave no file.
+    pub fn to_stored(&self) -> Option<StoredSession> {
+        if self.messages.len() <= self.bootstrap_len {
+            return None;
+        }
+
+        Some(StoredSession {
+            id: self.id.clone(),
+            cwd: self.cwd.clone(),
+            model: self.model().to_string(),
+            updated_at: history::now_secs(),
+            messages: self.messages[self.bootstrap_len..].to_vec(),
+        })
     }
 
     pub fn model(&self) -> &str {
