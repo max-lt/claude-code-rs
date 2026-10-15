@@ -28,6 +28,8 @@ pub struct Session<P: PermissionHandler> {
     system_prompt: String,
     tools: ToolRegistry,
     id: String,
+    /// Conversation size after the last completed turn, in tokens.
+    context_used: u64,
 }
 
 pub struct SessionBuilder {
@@ -122,6 +124,7 @@ impl SessionBuilder {
             system_prompt,
             tools: tools::default_registry(),
             id: history::new_id(),
+            context_used: 0,
         })
     }
 
@@ -147,10 +150,25 @@ impl<P: PermissionHandler> Session<P> {
         self.messages.truncate(self.bootstrap_len);
         // The old conversation stays on disk and remains resumable.
         self.id = history::new_id();
+        self.context_used = 0;
     }
 
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// Conversation size after the last turn, in tokens. Compare against the
+    /// model's context window.
+    pub fn context_used(&self) -> u64 {
+        self.context_used
+    }
+
+    /// Rough token count of the whole conversation (about 4 bytes of JSON per
+    /// token), for sessions saved without a measured value.
+    fn estimate_context(&self) -> u64 {
+        let bytes = serde_json::to_string(&self.messages).map_or(0, |s| s.len())
+            + self.system_prompt.len();
+        (bytes / 4) as u64
     }
 
     /// Replace the conversation with a saved one. The bootstrap messages are
@@ -161,6 +179,9 @@ impl<P: PermissionHandler> Session<P> {
         self.messages.extend(stored.messages);
         self.id = stored.id;
         self.set_model(stored.model);
+        self.context_used = stored
+            .context_used
+            .unwrap_or_else(|| self.estimate_context());
     }
 
     /// Snapshot of the conversation for [`history::save`]. `None` while there
@@ -176,6 +197,7 @@ impl<P: PermissionHandler> Session<P> {
             model: self.model().to_string(),
             updated_at: history::now_secs(),
             messages: self.messages[self.bootstrap_len..].to_vec(),
+            context_used: Some(self.context_used),
         })
     }
 
@@ -272,9 +294,14 @@ impl<P: PermissionHandler> Session<P> {
             });
         }
 
+        // A turn stopped before any reply keeps the previous size.
+        if context_used > 0 {
+            self.context_used = context_used;
+        }
+
         Ok(TurnSummary {
             usage: total_usage,
-            context_used,
+            context_used: self.context_used,
         })
     }
 
@@ -328,5 +355,55 @@ impl<P: PermissionHandler> Session<P> {
         }
 
         results
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn session() -> Session<AllowAll> {
+        SessionBuilder::new("token".to_string(), false)
+            .cwd(PathBuf::from("/p"))
+            .build()
+            .unwrap()
+    }
+
+    fn stored(context_used: Option<u64>) -> StoredSession {
+        StoredSession {
+            id: "1".to_string(),
+            cwd: PathBuf::from("/p"),
+            model: DEFAULT_MODEL.to_string(),
+            updated_at: 0,
+            messages: vec![Message {
+                role: "user".to_string(),
+                content: Content::text("x".repeat(4000)),
+            }],
+            context_used,
+        }
+    }
+
+    #[test]
+    fn restore_keeps_the_saved_context_size() {
+        let mut s = session();
+        s.restore(stored(Some(777)));
+        assert_eq!(s.context_used(), 777);
+        assert_eq!(s.to_stored().unwrap().context_used, Some(777));
+    }
+
+    #[test]
+    fn restore_estimates_when_the_file_has_no_value() {
+        let mut s = session();
+        s.restore(stored(None));
+        // ~4000 bytes of text at ~4 bytes per token, plus the bootstrap.
+        assert!(s.context_used() >= 1000, "got {}", s.context_used());
+    }
+
+    #[test]
+    fn clear_resets_the_context_size() {
+        let mut s = session();
+        s.restore(stored(Some(777)));
+        s.clear();
+        assert_eq!(s.context_used(), 0);
     }
 }

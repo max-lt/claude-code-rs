@@ -500,6 +500,7 @@ impl App {
 
                 CommandResult::Clear => {
                     let _ = self.session_tx.send(SessionCmd::Clear);
+                    self.context_used = 0;
                     self.messages.clear();
                     self.messages
                         .push(DisplayMessage::Info("Conversation cleared.".to_string()));
@@ -858,6 +859,8 @@ pub fn run(
     ui_rx: mpsc::UnboundedReceiver<UiEvent>,
 ) -> Result<()> {
     let model = session.model().to_string();
+    // A resumed session starts with the size it had when it was saved.
+    let context_used = session.context_used();
     let app_ui_tx = ui_tx.clone();
 
     // Channel for UI → session commands
@@ -903,6 +906,7 @@ pub fn run(
     }));
 
     let mut app = App::new(cwd, model, restored, ui_rx, app_ui_tx, session_tx);
+    app.context_used = context_used;
 
     // Start with a clean alternate screen
     terminal.clear()?;

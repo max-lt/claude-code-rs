@@ -24,6 +24,10 @@ pub struct StoredSession {
     /// Seconds since the Unix epoch.
     pub updated_at: u64,
     pub messages: Vec<Message>,
+    /// Conversation size after the last turn, in tokens. Absent in sessions
+    /// saved before it was recorded; the session estimates it on restore.
+    #[serde(default)]
+    pub context_used: Option<u64>,
 }
 
 /// What the resume picker shows for one saved session.
@@ -175,6 +179,7 @@ mod tests {
             cwd: PathBuf::from(cwd),
             model: "claude-sonnet-5-5".to_string(),
             updated_at,
+            context_used: None,
             messages: vec![
                 Message {
                     role: "user".to_string(),
@@ -199,6 +204,21 @@ mod tests {
         assert_eq!(loaded.cwd, PathBuf::from("/p"));
         assert_eq!(loaded.messages.len(), 2);
         assert_eq!(loaded.messages[0].content.to_text(), "hello");
+    }
+
+    #[test]
+    fn context_used_roundtrips_and_old_files_still_load() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = stored("1", "/p", 10, "hello");
+        s.context_used = Some(1234);
+        save_in(tmp.path(), &s).unwrap();
+        assert_eq!(load_from(tmp.path(), "1").unwrap().context_used, Some(1234));
+
+        // A file written before the field existed.
+        let mut json: serde_json::Value = serde_json::to_value(stored("2", "/p", 10, "hi")).unwrap();
+        json.as_object_mut().unwrap().remove("context_used");
+        fs::write(tmp.path().join("2.json"), json.to_string()).unwrap();
+        assert_eq!(load_from(tmp.path(), "2").unwrap().context_used, None);
     }
 
     #[test]
